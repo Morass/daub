@@ -290,6 +290,12 @@ claim — that the pixel grid double-scales — was wrong: the grid draws after
 
 ---
 
+## Licence
+
+MIT — see [LICENSE](LICENSE). Use it, fork it, ship it.
+
+---
+
 ## What's deliberately missing
 
 **Layers.** The single biggest absence. Everything here assumes one bitmap.
