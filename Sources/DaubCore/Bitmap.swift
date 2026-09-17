@@ -213,22 +213,42 @@ public extension Bitmap {
         cachedLiveImageIsStale()
     }
 
-    /// Replace every pixel within `tolerance` of `target`. This is how "make the white
-    /// background transparent" works, and the same routine serves a colour-replace tool:
-    /// the only difference is whether the replacement has an alpha of 0.
+    /// Replace every pixel whose colour is within `tolerance` of `target`. This is how
+    /// "make the white background transparent" works, and the same routine serves the
+    /// colour-replace tool: the only difference is whether the replacement has an alpha
+    /// of 0.
     ///
+    /// Matching is on colour alone (see `RGBA.colourMatches`) and each changed pixel keeps
+    /// its own coverage (see `RGBA.recoloured`), so a soft antialiased edge is recoloured
+    /// softly instead of being cut into a hard step.
+    ///
+    /// - Parameter region: restrict the work to these drawing-space pixels — the selection,
+    ///   when there is one. `nil` means the whole canvas.
     /// - Returns: how many pixels changed.
     @discardableResult
-    func replaceColour(matching target: RGBA, with replacement: RGBA, tolerance: Int) -> Int {
+    func replaceColour(matching target: RGBA, with replacement: RGBA, tolerance: Int,
+                       in region: CGRect? = nil) -> Int {
+        let area = (region.map { $0.integral.intersection(bounds) } ?? bounds)
+        guard area.width >= 1, area.height >= 1 else { return 0 }
+        let wanted = target.unpremultiplied
+        let fillsEmpty = wanted.a == 0
         var changed = 0
         withPixelBuffer { buffer in
-            for y in 0..<buffer.height {
-                for x in 0..<buffer.width where buffer.get(x, y).matches(target, tolerance: tolerance) {
-                    buffer.set(x, y, replacement)
+            for y in Int(area.minY)..<Int(area.maxY) {
+                for x in Int(area.minX)..<Int(area.maxX) {
+                    let pixel = buffer.get(x, y)
+                    guard pixel.colourMatches(wanted, tolerance: tolerance) else { continue }
+                    // Replacing "nothing" is painting: the matched pixels have no coverage
+                    // worth keeping, so they take the new colour whole. Replacing a colour
+                    // keeps each pixel's own coverage, so soft edges stay soft.
+                    let out = fillsEmpty ? replacement : pixel.recoloured(to: replacement)
+                    guard out != pixel else { continue }
+                    buffer.set(x, y, out)
                     changed += 1
                 }
             }
         }
+        if changed > 0 { cachedLiveImageIsStale() }
         return changed
     }
 
@@ -319,6 +339,67 @@ public struct RGBA: Equatable, Sendable {
     public var cgColor: CGColor {
         CGColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255,
                 blue: CGFloat(b) / 255, alpha: CGFloat(a) / 255)
+    }
+
+    /// Buffer pixels are premultiplied; a colour taken from a swatch is not. Undo the
+    /// multiply before comparing colours, or a half-transparent red (128,0,0,128) reads as
+    /// a dark maroon and matches nothing the user can name.
+    /// Alpha at or below this is invisible on any screen (3% coverage), so it counts as
+    /// empty rather than as a colour worth keeping.
+    @usableFromInline
+    static let invisible = 8
+
+    @inlinable
+    public var unpremultiplied: RGBA {
+        guard a > 0, a < 255 else { return self }
+        // Rounded, not truncated: the premultiply that produced these bytes rounded too, so
+        // truncating here loses a count and a colour stops matching *itself* at tolerance 0.
+        // (Straight 200 at alpha 128 stores 100; 100 * 255 / 128 truncates to 199.)
+        func u(_ v: UInt8) -> UInt8 { UInt8(min(255, (Int(v) * 255 + Int(a) / 2) / Int(a))) }
+        return RGBA(r: u(r), g: u(g), b: u(b), a: a)
+    }
+
+    /// Colour comparison for replace-colour: hue only, with full transparency as a class of
+    /// its own. `self` is a premultiplied buffer pixel, `other` a straight colour.
+    ///
+    /// Alpha stays out of the tolerance because opacity is not colour: at tolerance 128 a
+    /// half-covered edge pixel would otherwise count as a match for *empty canvas*, and an
+    /// eyedropper click on the empty area would turn every soft edge opaque. A transparent
+    /// pixel has no colour left to compare — its RGB is zeroed by the premultiply whatever
+    /// it used to be — so nothing is "near" it, and clicking empty canvas selects exactly
+    /// the empty canvas.
+    @inlinable
+    public func colourMatches(_ other: RGBA, tolerance: Int) -> Bool {
+        // A target of "nothing" matches what is invisible: exactly empty at tolerance 0, and
+        // up to `invisible` above that, so filling the empty area does not leave a rim of
+        // alpha-1 pixels behind. The cap matters — the tolerance slider measures distance in
+        // colour, and 128 there means "quite a different colour", not "half transparent": let
+        // it through unscaled and clicking the empty area would swallow every 50%-covered
+        // edge in the picture. Paint never matches nothing, whatever the tolerance.
+        if other.a == 0 { return Int(a) <= min(tolerance, RGBA.invisible) }
+        if a == 0 { return false }
+        // One count of slack on a partially covered pixel. Premultiplying rounds to a byte
+        // and un-premultiplying rounds again, and the round trip does not always come back:
+        // straight 200 at alpha 128 is stored as 100 and reads back as 199. Without the
+        // slack a soft edge fails to match the very colour it was painted with, which is
+        // exactly the case where the user expects the swap to reach.
+        let slack = a == 255 ? 0 : 1
+        let c = unpremultiplied
+        return abs(Int(c.r) - Int(other.r)) <= tolerance + slack
+            && abs(Int(c.g) - Int(other.g)) <= tolerance + slack
+            && abs(Int(c.b) - Int(other.b)) <= tolerance + slack
+    }
+
+    /// Take `replacement`'s colour while keeping this pixel's own coverage, so an
+    /// antialiased edge stays soft. A transparent replacement therefore erases in
+    /// proportion — which is what the background knockout wants — and a pixel that was
+    /// fully transparent takes the replacement whole, so replacing the empty area with an
+    /// opaque colour fills it.
+    @inlinable
+    public func recoloured(to replacement: RGBA) -> RGBA {
+        let outA = a == 0 ? Int(replacement.a) : Int(a) * Int(replacement.a) / 255
+        func p(_ v: UInt8) -> UInt8 { UInt8(Int(v) * outA / 255) }
+        return RGBA(r: p(replacement.r), g: p(replacement.g), b: p(replacement.b), a: UInt8(outA))
     }
 
     /// Per-channel distance, the comparison a fill tolerance slider needs.

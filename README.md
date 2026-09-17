@@ -71,7 +71,7 @@ keystroke from the text tool.
 | 💉 | **Pick Colour** | `I` | Click to sample; snaps back to the tool you were using. Right-click samples into the background. |
 | T | **Text** | `T` | Click, type, press ⏎ to bake it in. Escape cancels. Font and size in the sidebar. |
 | ⧉ | **Clone Stamp** | `K` | ⌥-click sets the source, then drag to paint from it. Copies the picture as it was at the start of the stroke, so crossing your own source never smears. |
-| 🎨 | **Replace Colour** | `G` | Click a colour: every pixel of it in the whole picture becomes the foreground colour. Uses the tolerance slider. |
+| 🎨 | **Replace Colour** | `G` | Click a colour: every pixel of it becomes the foreground colour (right-click: the background colour). Tolerance widens the match; a selection limits where it applies. See *Swapping one colour for another*. |
 | ▨ | **Gradient** | `Y` | Drag to set direction and length: foreground → background. Clipped to the selection if there is one. |
 | ╱ | **Line** | `L` | ⇧ constrains to 45°. |
 | ▭ | **Rectangle** | `R` | ⇧ makes it square. |
@@ -95,6 +95,8 @@ Outline uses the dragging button's colour; the fill uses the other one.
 | ⌘+ / ⌘− | Zoom in / out (or pinch on a trackpad) |
 | ⌘⇧K | Crop to selection |
 | ⌫ | Clear the selection to the background colour |
+| ⌥ + drag | Duplicate a selection instead of moving it |
+| ⌘? | Open the in-app help (tools, keys and recipes, with a search field) |
 | Escape | Drop the selection (or cancel a move in progress) |
 
 ---
@@ -103,6 +105,7 @@ Outline uses the dragging button's colour; the fill uses the other one.
 
 1. Pick **Select** (`S`) and drag a rectangle. Marching ants mark it.
 2. **Drag inside it to move it.** The pixels lift out, leaving the background colour behind.
+   Hold ⌥ as you start the drag to leave the original where it was and move a copy.
    Arrow keys nudge by 1 px, ⇧+arrows by 10.
 3. ⌘C / ⌘X / ⌘V copy, cut and paste. A paste arrives as a floating selection at the top
    left, already selected, so you can drag it into place.
@@ -138,6 +141,28 @@ than silently doing nothing.
 
 ---
 
+## Swapping one colour for another
+
+**Replace Colour** (`G`) is a whole-area operation, not a brush: you click one pixel and
+every pixel that matches it changes at once.
+
+- The **foreground** colour is what you get; right-click to swap to the **background**
+  colour instead.
+- **Tolerance** widens the match. Flat art needs 0. Anything that has been through JPEG, or
+  any anti-aliased drawing, needs 15–40 or you will leave a fringe of near-misses behind.
+- **Draw a selection first** and only that area changes — the way to recolour one button
+  without touching every other pixel of that colour in the picture. Clicking outside the
+  selection does nothing (and beeps); ⌘D deselects.
+- **Soft edges stay soft.** A pixel that is half-covered keeps its coverage and only changes
+  hue, so a swap does not turn a smooth edge into a stair-step.
+- **Empty is not a colour.** On a canvas with transparency, clicking the empty area matches
+  the empty area only — never the paint sitting on it — and fills it with the new colour.
+  The reverse of that is *Image ▸ Make Background Colour Transparent*, which is the same
+  operation with "nothing" as the replacement.
+- A click that changes no pixels costs no undo step.
+
+---
+
 ## The Image menu
 
 | Item | Notes |
@@ -161,6 +186,15 @@ other image tool), the canvas size, and the selection size while you drag one.
 
 ---
 
+## Help, inside the app
+
+**Help ▸ Daub Help** (⌘?) opens a panel with every tool, every key and the recipes above,
+with a search field across the lot — type "transparent" or "clone" rather than hunting
+sections. The tool list is generated from the same values the toolbox uses, so it cannot
+drift out of date. It closes with the drawing.
+
+---
+
 ## Worked examples
 
 **Touch a blemish out of a photo**
@@ -173,7 +207,8 @@ Transparent* → if a white fringe survives, ⌘Z, raise Fill Tolerance to ~30, 
 ⌘S as `logo.png`.
 
 **Recolour something**
-**Replace Colour** (`G`), Tolerance ~20, foreground set to the new colour, click the old
+Select the area first if only part of the picture should change. Then **Replace Colour**
+(`G`), Tolerance ~20, foreground set to the new colour, click the old
 colour. Every pixel of it in the picture changes at once.
 
 **A quick title card**

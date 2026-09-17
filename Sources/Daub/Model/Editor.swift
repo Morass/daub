@@ -195,7 +195,10 @@ final class Editor: ObservableObject {
     /// real transparency. Uses the fill tolerance, which is the knob people already
     /// understand for "near enough to this colour".
     func makeBackgroundTransparent() {
-        let changed = document.makeColourTransparent(secondaryNS, tolerance: Int(tolerance))
+        let region = canvas?.currentSelection
+        canvas?.commitFloatingSelection()
+        let changed = document.makeColourTransparent(secondaryNS, tolerance: Int(tolerance),
+                                                     in: region)
         if changed == 0 {
             let alert = NSAlert()
             alert.messageText = "No pixels matched the background colour."
@@ -203,8 +206,11 @@ final class Editor: ObservableObject {
                 + "(currently \(secondaryNS.accessibilityName)). Pick the colour you want "
                 + "removed with the eyedropper — right-click sets the background — and raise "
                 + "the Fill tolerance if the edges are soft."
+            if region != nil {
+                alert.informativeText += " Only the selected area was searched — deselect "
+                    + "with ⌘D to knock the colour out of the whole picture."
+            }
             alert.runModal()
-            document.cancelCheckpoint()
             return
         }
         canvas?.documentDidChange()
@@ -212,7 +218,10 @@ final class Editor: ObservableObject {
     }
 
     func replaceColourUnderBackground(with replacement: NSColor) {
-        document.replaceColour(secondaryNS, with: replacement, tolerance: Int(tolerance))
+        let region = canvas?.currentSelection
+        canvas?.commitFloatingSelection()
+        document.replaceColour(secondaryNS, with: replacement, tolerance: Int(tolerance),
+                               in: region)
         canvas?.documentDidChange()
         didCommit()
     }

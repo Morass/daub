@@ -49,8 +49,13 @@ final class PaintDocument {
     /// Call once immediately before a mutation that should be undoable as a single step.
     func checkpoint() {
         history.record(bitmap.makeImage())
+        wasDirtyBeforeCheckpoint = isDirty
         isDirty = true
     }
+
+    /// What `isDirty` was before the checkpoint, so cancelling one can put it back: an
+    /// action that turned out to change nothing must not leave a saved file looking edited.
+    private var wasDirtyBeforeCheckpoint = false
 
     @discardableResult
     func undo() -> Bool {
@@ -106,21 +111,27 @@ final class PaintDocument {
     /// Knock a colour out of the picture — the "my PNG has a white background and I want
     /// it transparent" operation, which is the only reason most people ever want alpha.
     @discardableResult
-    func makeColourTransparent(_ colour: NSColor, tolerance: Int) -> Int {
+    func makeColourTransparent(_ colour: NSColor, tolerance: Int, in region: CGRect? = nil) -> Int {
         guard let target = RGBA(colour.cgColor) else { return 0 }
         checkpoint()
         let changed = bitmap.replaceColour(matching: target,
                                            with: RGBA(r: 0, g: 0, b: 0, a: 0),
-                                           tolerance: tolerance)
-        if changed > 0 { hasAlpha = true }
+                                           tolerance: tolerance, in: region)
+        if changed > 0 { hasAlpha = true } else { cancelCheckpoint() }
         return changed
     }
 
+    /// - Parameter region: the selection, when there is one; `nil` swaps across the whole
+    ///   picture. Either way a run that matched nothing costs no undo step.
     @discardableResult
-    func replaceColour(_ colour: NSColor, with replacement: NSColor, tolerance: Int) -> Int {
+    func replaceColour(_ colour: NSColor, with replacement: NSColor, tolerance: Int,
+                       in region: CGRect? = nil) -> Int {
         guard let target = RGBA(colour.cgColor), let new = RGBA(replacement.cgColor) else { return 0 }
         checkpoint()
-        return bitmap.replaceColour(matching: target, with: new, tolerance: tolerance)
+        let changed = bitmap.replaceColour(matching: target, with: new,
+                                           tolerance: tolerance, in: region)
+        if changed == 0 { cancelCheckpoint() }
+        return changed
     }
 
     /// Throw away everything outside `rect`. Cheap, and the operation a screenshot needs
@@ -158,8 +169,12 @@ final class PaintDocument {
         bitmap.croppedImage(in: rect)
     }
 
-    /// Drop the checkpoint an action recorded before discovering it changed nothing.
-    func cancelCheckpoint() { history.discardLastCheckpoint() }
+    /// Drop the checkpoint an action recorded before discovering it changed nothing, and
+    /// with it the dirty flag that checkpoint raised.
+    func cancelCheckpoint() {
+        history.discardLastCheckpoint()
+        isDirty = wasDirtyBeforeCheckpoint
+    }
 
     func fillRegion(_ rect: CGRect, with color: NSColor) {
         let ctx = bitmap.context

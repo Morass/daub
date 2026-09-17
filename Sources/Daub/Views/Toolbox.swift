@@ -90,7 +90,9 @@ struct Toolbox: View {
 
         if editor.tool == .colourReplace {
             LabelledSlider(title: "Tolerance", value: $editor.tolerance, range: 0...128, unit: "")
-            Text("Click a colour to swap every pixel of it for the foreground colour.")
+            Text("Click a colour to swap every pixel of it for the foreground colour; "
+                 + "right-click swaps to the background one. Select an area first to limit "
+                 + "the swap to it.")
                 .font(.system(size: 10.5))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -283,6 +283,93 @@ final class PanelFixTests: XCTestCase {
 }
 
 /// Transparency: knocking a background out, erasing to nothing, and flattening for JPEG.
+/// Replace-colour matches on colour and keeps coverage. Three separate rules, each of
+/// which was wrong when the tool shipped: alpha counted as part of the colour, the whole
+/// canvas was always searched, and every match was flattened to a hard edge.
+final class ColourSwapTests: XCTestCase {
+    private func white() -> CGColor { CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1) }
+    private let red = RGBA(r: 255, g: 0, b: 0)
+    private let blue = RGBA(r: 0, g: 0, b: 255)
+
+    func testRegionLimitsTheSwapToTheSelection() {
+        let b = Bitmap(width: 8, height: 8, fill: CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1))
+        let changed = b.replaceColour(matching: red, with: blue, tolerance: 0,
+                                      in: CGRect(x: 2, y: 2, width: 3, height: 3))
+        XCTAssertEqual(changed, 9)
+        XCTAssertEqual(b.pixel(x: 3, y: 3), blue, "inside the region")
+        XCTAssertEqual(b.pixel(x: 0, y: 0), red, "outside it, untouched")
+    }
+
+    func testEmptyCanvasIsNotNearAnyColour() {
+        let b = Bitmap(width: 4, height: 4)                      // fully transparent
+        b.setPixel(x: 1, y: 1, to: RGBA(r: 0, g: 0, b: 0))        // opaque black paint
+
+        // A half-covered pixel is 50% away from empty in every premultiplied channel; with
+        // alpha inside the tolerance this used to match, and clicking the empty area turned
+        // every soft edge opaque.
+        b.setPixel(x: 2, y: 2, to: RGBA(r: 128, g: 0, b: 0, a: 128))
+
+        b.setPixel(x: 3, y: 3, to: RGBA(r: 2, g: 0, b: 0, a: 2))  // invisible rim of a stroke
+
+        let changed = b.replaceColour(matching: RGBA(r: 0, g: 0, b: 0, a: 0),
+                                      with: blue, tolerance: 128)
+        XCTAssertEqual(changed, 14, "the 13 empty pixels and the invisible one")
+        XCTAssertEqual(b.pixel(x: 3, y: 3), blue, "an alpha-2 rim counts as empty, not as art")
+        XCTAssertEqual(b.pixel(x: 1, y: 1), RGBA(r: 0, g: 0, b: 0), "black paint survives")
+        XCTAssertEqual(b.pixel(x: 2, y: 2).a, 128, "so does the soft edge")
+        XCTAssertEqual(b.pixel(x: 0, y: 0), blue, "and the empty area takes the new colour whole")
+    }
+
+    func testSoftEdgesKeepTheirCoverage() {
+        let b = Bitmap(width: 2, height: 2)
+        b.setPixel(x: 0, y: 0, to: RGBA(r: 255, g: 0, b: 0))              // solid red
+        b.setPixel(x: 1, y: 0, to: RGBA(r: 128, g: 0, b: 0, a: 128))      // half-covered red
+
+        XCTAssertEqual(b.replaceColour(matching: red, with: blue, tolerance: 0), 2,
+                       "the same red, at two different opacities")
+        XCTAssertEqual(b.pixel(x: 0, y: 0), RGBA(r: 0, g: 0, b: 255))
+        XCTAssertEqual(b.pixel(x: 1, y: 0).a, 128, "coverage preserved, not cut to a hard edge")
+        XCTAssertEqual(b.pixel(x: 1, y: 0).b, 128, "and premultiplied to match")
+    }
+
+    func testKnockoutErasesInProportion() {
+        let b = Bitmap(width: 2, height: 1)
+        b.setPixel(x: 0, y: 0, to: RGBA(r: 255, g: 255, b: 255))
+        b.setPixel(x: 1, y: 0, to: RGBA(r: 128, g: 128, b: 128, a: 128))  // soft white edge
+
+        b.replaceColour(matching: RGBA(r: 255, g: 255, b: 255),
+                        with: RGBA(r: 0, g: 0, b: 0, a: 0), tolerance: 0)
+        XCTAssertEqual(b.pixel(x: 0, y: 0).a, 0)
+        XCTAssertEqual(b.pixel(x: 1, y: 0).a, 0, "a half-covered white edge goes too")
+    }
+
+    /// The round trip through premultiplied bytes loses a count, so at tolerance 0 a soft
+    /// edge must still match the colour it was painted with.
+    func testASoftEdgeMatchesItsOwnColourAtZeroTolerance() {
+        let straight = RGBA(r: 200, g: 50, b: 25)
+        let b = Bitmap(width: 1, height: 1)
+        b.setPixel(x: 0, y: 0, to: RGBA(r: 100, g: 25, b: 13, a: 128))   // the same colour, half covered
+
+        XCTAssertEqual(b.replaceColour(matching: straight, with: blue, tolerance: 0), 1)
+        XCTAssertEqual(b.pixel(x: 0, y: 0).a, 128, "still half covered")
+    }
+
+    func testSwappingAColourForItselfChangesNothing() {
+        let b = Bitmap(width: 4, height: 4, fill: white())
+        XCTAssertEqual(b.replaceColour(matching: RGBA(r: 255, g: 255, b: 255),
+                                       with: RGBA(r: 255, g: 255, b: 255), tolerance: 0), 0,
+                       "no pixels changed, so the caller can drop its undo checkpoint")
+    }
+
+    func testRegionOutsideTheCanvasIsANoOp() {
+        let b = Bitmap(width: 4, height: 4, fill: white())
+        XCTAssertEqual(b.replaceColour(matching: RGBA(r: 255, g: 255, b: 255), with: blue,
+                                       tolerance: 0,
+                                       in: CGRect(x: 40, y: 40, width: 4, height: 4)), 0)
+        XCTAssertEqual(b.pixel(x: 0, y: 0), RGBA(r: 255, g: 255, b: 255))
+    }
+}
+
 final class TransparencyTests: XCTestCase {
     private func white() -> CGColor { CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1) }
 

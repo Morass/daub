@@ -57,12 +57,24 @@ final class CanvasContainerView: NSView {
 final class CloseGuard: NSObject, NSWindowDelegate {
     weak var next: NSWindowDelegate?
 
+    /// SwiftUI owns the window, so it gets the first say: if it vetoes the close there is
+    /// nothing to ask the user about. Only then do we put up the unsaved-work prompt.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        Editor.current?.confirmDiscardIfNeeded() ?? true
+        if let answer = next?.windowShouldClose?(sender), answer == false { return false }
+        return Editor.current?.confirmDiscardIfNeeded() ?? true
+    }
+
+    /// The help panel must not outlive the drawing: a window left open after the canvas
+    /// closes means "last window closed" never fires, and the app sits there with nothing
+    /// to paint on.
+    func windowWillClose(_ notification: Notification) {
+        next?.windowWillClose?(notification)
+        HelpWindow.shared.close()
     }
 
     override func responds(to selector: Selector!) -> Bool {
         if selector == #selector(windowShouldClose(_:)) { return true }
+        if selector == #selector(windowWillClose(_:)) { return true }
         return super.responds(to: selector) || (next?.responds(to: selector) ?? false)
     }
 

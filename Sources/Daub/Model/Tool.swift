@@ -28,6 +28,39 @@ enum Tool: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// One line for the in-app help window. Written as "what it does, then the thing you
+    /// would otherwise have to discover by accident".
+    var help: String {
+        switch self {
+        case .select:
+            "Drag a rectangle, then drag inside it to move the pixels. ⌥-drag leaves a copy behind. ⌘D deselects, ⌘⇧K crops to the selection."
+        case .pencil:
+            "Hard single-pixel freehand, no antialiasing. The tool for pixel art and for touching up one pixel at 800%."
+        case .brush:
+            "Soft round freehand. Size and Opacity apply; Smooth edges makes diagonals look smooth instead of stepped."
+        case .airbrush:
+            "Sprays while you hold the button, so it builds up if you dwell. Radius sets the spread, Density how fast it lands."
+        case .eraser:
+            "Rubs back to the background colour — or to nothing at all on a canvas that has transparency."
+        case .fill:
+            "Flood-fills the area under the click. Raise Tolerance when a photo or JPEG leaves speckles behind."
+        case .picker:
+            "Takes the colour under the click into the foreground swatch; right-click takes it into the background. Snaps back to your previous tool afterwards."
+        case .text:
+            "Click, type, press ⏎ to stamp it into the picture. Escape cancels. Once stamped it is pixels, not text, so set the font and size first."
+        case .clone:
+            "⌥-click to set the source, then paint to copy from it. The source moves with your stroke, keeping the offset."
+        case .colourReplace:
+            "Click a colour to swap every pixel of it for the foreground colour; right-click swaps to the background colour. Tolerance widens the match, a selection limits where it applies."
+        case .gradient:
+            "Drag to blend from the foreground colour to the background colour along the drag."
+        case .line:
+            "Drag for a straight line. Hold ⇧ to snap to 45°."
+        case .rectangle, .roundedRectangle, .ellipse:
+            "Drag out the shape. Hold ⇧ for a square or circle. Fill style chooses outline, filled, or both; the outline uses the foreground colour and the fill the background one."
+        }
+    }
+
     /// SF Symbol name, or nil for the shape tools, which get a hand-drawn vector glyph:
     /// a real rectangle reads better at 16pt than any symbol that approximates one.
     var symbol: String? {

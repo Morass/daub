@@ -95,6 +95,11 @@ struct DaubCommands: Commands {
             Button("Swap Colours   X") { editor.swapColours() }
         }
 
+        CommandGroup(replacing: .help) {
+            Button("Daub Help") { HelpWindow.shared.show() }
+                .keyboardShortcut("?", modifiers: .command)
+        }
+
         CommandGroup(after: .toolbar) {
             Button("Zoom In") { editor.zoomIn() }.keyboardShortcut("+")
             Button("Zoom Out") { editor.zoomOut() }.keyboardShortcut("-")

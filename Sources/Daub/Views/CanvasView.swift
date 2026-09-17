@@ -44,6 +44,13 @@ final class CanvasView: NSView {
     /// Clone stamp: ⌥-click sets the source. The snapshot is taken at mouse-down so the
     /// tool copies the picture as it was, not the paint it is laying down — otherwise a
     /// stroke that crosses its own source smears into a feedback loop.
+    /// Whether the lift that created the current floating selection actually changed the
+    /// picture. A move clears the pixels it lifted, so discarding it has to undo that; a
+    /// ⌥-drag duplicate and a paste change nothing, so discarding them must throw the
+    /// checkpoint away instead — otherwise ⌥-drag then Delete leaves an undo step that
+    /// undoes nothing and a document marked edited.
+    private var floatingChangedPixels = false
+
     private var cloneSource: CGPoint?
     private var cloneOffset: CGSize?
     private var cloneSnapshot: CGImage?
@@ -261,9 +268,11 @@ final class CanvasView: NSView {
 
         case .fill:
             commitFloatingSelection()
-            doc.checkpoint()
             let px = pixel(p)
+            // Convert the colour *before* opening an undo step: a colour that cannot be
+            // converted would otherwise leave a checkpoint behind that undoes nothing.
             guard let rgba = RGBA(colour.cgColor) else { return }
+            doc.checkpoint()
             if let dirty = FloodFill.fill(doc.bitmap, x: px.x, y: px.y, with: rgba,
                                           tolerance: Int(editor.tolerance)) {
                 doc.markDirty()
@@ -306,17 +315,25 @@ final class CanvasView: NSView {
             cloneDab(at: p)
 
         case .colourReplace:
+            // Scoped to the selection when there is one, which is the only way to recolour
+            // one button and not every pixel of that colour in the picture.
+            let region = currentSelection
+            // Test the click before committing anything: a click outside the selection is a
+            // miss, and a miss must not stamp a floating selection down as a side effect.
+            guard region == nil || region!.contains(p) else { NSSound.beep(); return }
             commitFloatingSelection()
             let px = pixel(p)
             let under = doc.bitmap.pixel(x: px.x, y: px.y)
             guard let underColour = NSColor(cgColor: under.cgColor) else { return }
-            doc.replaceColour(underColour, with: colour, tolerance: Int(editor.tolerance))
+            let changed = doc.replaceColour(underColour, with: colour,
+                                            tolerance: Int(editor.tolerance), in: region)
+            if changed == 0 { NSSound.beep(); return }   // already that colour: no undo step
             needsDisplay = true
             editor.didCommit()
 
         case .select:
             if let rect = floating?.rect ?? selection, rect.contains(p) {
-                liftSelectionIfNeeded(rect)
+                liftSelectionIfNeeded(rect, leavingCopy: event.modifierFlags.contains(.option))
                 drag = .moveSelection(grab: p, origin: floating?.rect.origin ?? rect.origin)
             } else {
                 commitFloatingSelection()
@@ -523,13 +540,35 @@ final class CanvasView: NSView {
 
     // MARK: - Selection
 
-    private func liftSelectionIfNeeded(_ rect: CGRect) {
+    /// - Parameter leavingCopy: ⌥-drag duplicates instead of moving, so the pixels under
+    ///   the selection stay put and only the floating copy travels.
+    private func liftSelectionIfNeeded(_ rect: CGRect, leavingCopy: Bool = false) {
         guard floating == nil else { return }
         doc.checkpoint()
         guard let image = doc.image(in: rect) else { return }
-        doc.fillRegion(rect, with: editor.secondaryNS)
+        if !leavingCopy { doc.fillRegion(rect, with: editor.secondaryNS) }
+        floatingChangedPixels = !leavingCopy
         floating = Floating(image: image, rect: rect.integral)
         selection = nil
+        needsDisplay = true
+    }
+
+    /// Throw the floating selection away.
+    ///
+    /// - Parameter restoringPixels: Escape puts the picture back how it was, so a move has to
+    ///   undo the lift that cleared its source. Delete does not: for a move the cleared
+    ///   source *is* the deletion. Either way a float that never changed a pixel — a paste,
+    ///   or an ⌥-drag duplicate — drops its checkpoint instead, so discarding it leaves no
+    ///   undo step and no edited flag behind.
+    private func discardFloatingSelection(restoringPixels: Bool) {
+        guard floating != nil else { return }
+        floating = nil
+        if !floatingChangedPixels {
+            doc.cancelCheckpoint()
+        } else if restoringPixels {
+            doc.undo()
+        }
+        floatingChangedPixels = false
         needsDisplay = true
     }
 
@@ -537,6 +576,7 @@ final class CanvasView: NSView {
         guard let f = floating else { return }
         doc.stamp(f.image, at: f.rect)
         floating = nil
+        floatingChangedPixels = false
         selection = f.rect.intersection(doc.bounds)
         needsDisplay = true
         editor.didCommit()
@@ -566,7 +606,7 @@ final class CanvasView: NSView {
 
     func deleteSelection() {
         if floating != nil {
-            floating = nil                       // the lift already cleared the source region
+            discardFloatingSelection(restoringPixels: false)   // a move already cleared its source
             selection = nil
             editor.readout.selection = nil
             needsDisplay = true
@@ -602,6 +642,7 @@ final class CanvasView: NSView {
         doc.checkpoint()
         let rect = CGRect(x: 0, y: CGFloat(doc.height - image.height),
                           width: CGFloat(image.width), height: CGFloat(image.height))
+        floatingChangedPixels = false           // a paste has not touched the canvas yet
         floating = Floating(image: image, rect: rect)
         editor.readout.selection = rect.size
         startAnts()
@@ -686,8 +727,7 @@ final class CanvasView: NSView {
         switch event.keyCode {
         case 53:                                   // Escape
             if floating != nil {
-                floating = nil
-                doc.undo()                         // undo the lift, restoring the original pixels
+                discardFloatingSelection(restoringPixels: true)
                 editor.didCommit()
             }
             deselect()
