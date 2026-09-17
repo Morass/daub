@@ -9,7 +9,7 @@
 
 DESTDIR ?= /Applications
 
-.PHONY: all build run install uninstall test clean readme-art
+.PHONY: all build run install uninstall test clean readme-art screenshot
 
 all: build
 
@@ -38,3 +38,11 @@ readme-art:
 	swiftc -O -I .build/debug/Modules Scripts/make-readme-art.swift \
 		.build/debug/DaubCore.build/*.o -o .build/make-readme-art
 	.build/make-readme-art Resources/readme-art.png
+
+## Re-take the screenshot at the top of the README. The app renders its own window into a
+## PNG — no screen recording, no permission prompt — so this works over SSH, but it does
+## need a logged-in GUI session on the machine that runs it.
+screenshot: build
+	DAUB_SCREENSHOT="$(PWD)/Resources/readme-screenshot.png" \
+	DAUB_SCREENSHOT_ART="$(PWD)/Resources/readme-art.png" \
+		build/Daub.app/Contents/MacOS/Daub

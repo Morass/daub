@@ -1,13 +1,16 @@
 # Daub
 
-![daub](Resources/readme-art.png)
+![Daub, with the picture below open in it](Resources/readme-screenshot.png)
 
 A native macOS paint app. Classic-Paint tools, modern finish, no dependencies, ~800 KB.
 
-*(That picture is not a logo anyone designed — it is drawn by `Scripts/make-readme-art.swift`,
-which paints it with `DaubCore`, the same engine the app draws with: wobbly strokes, colour
-laid down before the outline and not quite inside it, and a drip. Re-render it with
-`make readme-art`.)*
+![daub](Resources/readme-art.png)
+
+*Both pictures are made by the app. The drawing is `Scripts/make-readme-art.swift`, which
+paints it with `DaubCore` — the same engine the brush and airbrush use: wobbly strokes,
+colour laid down before the outline and not quite inside it, and a drip. The screenshot is
+Daub rendering its own window into a PNG, with that drawing open. `make readme-art` and
+`make screenshot` re-make them.*
 
 macOS ships no raster paint app — Preview's Markup annotates, Freeform is vector, and the
 free simple option (Paintbrush) has been unmaintained for years. Daub fills that gap:

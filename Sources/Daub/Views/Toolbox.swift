@@ -7,7 +7,11 @@ struct Toolbox: View {
     private let columns = [GridItem(.adaptive(minimum: 34, maximum: 40), spacing: 6)]
 
     var body: some View {
-        ScrollView {
+        // A ScrollView is backed by an NSScrollView, whose content does not come out of an
+        // offscreen layer render — which is how the README screenshot is taken. The picture
+        // is the same either way, because the capture makes the window tall enough to hold
+        // the whole toolbox.
+        scrollingIfNeeded {
             VStack(alignment: .leading, spacing: 16) {
                 LazyVGrid(columns: columns, spacing: 6) {
                     ForEach(Tool.allCases) { tool in
@@ -24,6 +28,15 @@ struct Toolbox: View {
         }
         .frame(width: 186)
         .background(.bar)
+    }
+
+    @ViewBuilder
+    private func scrollingIfNeeded<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        if Screenshot.isCapturing {
+            VStack(spacing: 0) { content(); Spacer(minLength: 0) }
+        } else {
+            ScrollView { content() }
+        }
     }
 
     @ViewBuilder
