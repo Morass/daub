@@ -33,5 +33,13 @@ public final class UndoHistory {
         return next
     }
 
+    /// Throw away the checkpoint just recorded, for an action that turned out to change
+    /// nothing — filling an area with the colour it already is, say. Without this, every
+    /// misfired click costs the user a press of ⌘Z.
+    @discardableResult
+    public func discardLastCheckpoint() -> Bool {
+        past.popLast() != nil
+    }
+
     public func clear() { past.removeAll(); future.removeAll() }
 }

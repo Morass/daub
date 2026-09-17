@@ -24,11 +24,16 @@ final class PaintDocument {
         bitmap = Bitmap(width: width, height: height, fill: NSColor.white.cgColor)
     }
 
-    init(image: CGImage, url: URL?) {
-        bitmap = Bitmap(width: image.width, height: image.height, fill: NSColor.white.cgColor)
+    init(image: CGImage, url: URL?) throws {
+        bitmap = try Bitmap.checked(width: image.width, height: image.height, fill: NSColor.white.cgColor)
         bitmap.context.draw(image, in: bitmap.bounds)
         fileURL = url
     }
+
+    /// Mark the pixels changed without opening an undo step. Painting inside one drag
+    /// checkpoints once at mouse-down, so a save that lands mid-drag would otherwise
+    /// clear the dirty flag while the airbrush is still spraying.
+    func markDirty() { isDirty = true }
 
     // MARK: - History
 
@@ -87,48 +92,12 @@ final class PaintDocument {
 
     func apply(_ transform: Transform) {
         checkpoint()
-        guard let image = bitmap.makeImage() else { return }
         switch transform {
-        case .flipHorizontal, .flipVertical:
-            let ctx = bitmap.context
-            ctx.saveGState()
-            ctx.setBlendMode(.copy)
-            if transform == .flipHorizontal {
-                ctx.translateBy(x: CGFloat(width), y: 0)
-                ctx.scaleBy(x: -1, y: 1)
-            } else {
-                ctx.translateBy(x: 0, y: CGFloat(height))
-                ctx.scaleBy(x: 1, y: -1)
-            }
-            ctx.draw(image, in: bitmap.bounds)
-            ctx.restoreGState()
-
-        case .rotateLeft, .rotateRight:
-            let out = Bitmap(width: height, height: width, fill: NSColor.white.cgColor)
-            let ctx = out.context
-            ctx.saveGState()
-            ctx.setBlendMode(.copy)
-            if transform == .rotateRight {
-                ctx.translateBy(x: CGFloat(out.width), y: 0)
-                ctx.rotate(by: .pi / 2)
-            } else {
-                ctx.translateBy(x: 0, y: CGFloat(out.height))
-                ctx.rotate(by: -.pi / 2)
-            }
-            ctx.draw(image, in: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
-            ctx.restoreGState()
-            bitmap = out
-
-        case .invert:
-            bitmap.withRawPixels { base, w, h, rowBytes in
-                for y in 0..<h {
-                    let row = base + y * rowBytes
-                    for x in 0..<w {
-                        let p = row + x * 4
-                        p[0] = 255 &- p[0]; p[1] = 255 &- p[1]; p[2] = 255 &- p[2]
-                    }
-                }
-            }
+        case .flipHorizontal: bitmap.flip(horizontally: true)
+        case .flipVertical: bitmap.flip(horizontally: false)
+        case .rotateRight: bitmap = bitmap.rotatedQuarterTurn(clockwise: true, fill: NSColor.white.cgColor)
+        case .rotateLeft: bitmap = bitmap.rotatedQuarterTurn(clockwise: false, fill: NSColor.white.cgColor)
+        case .invert: bitmap.invertColours()
         }
     }
 
@@ -137,6 +106,9 @@ final class PaintDocument {
     func image(in rect: CGRect) -> CGImage? {
         bitmap.croppedImage(in: rect)
     }
+
+    /// Drop the checkpoint an action recorded before discovering it changed nothing.
+    func cancelCheckpoint() { history.discardLastCheckpoint() }
 
     func fillRegion(_ rect: CGRect, with color: NSColor) {
         let ctx = bitmap.context
@@ -147,12 +119,16 @@ final class PaintDocument {
         ctx.restoreGState()
     }
 
+    /// Composite, never `.copy`: a pasted PNG can carry alpha, and copying it would punch
+    /// transparency into a canvas the rest of the app assumes is opaque — which then
+    /// survives into the exported file.
     func stamp(_ image: CGImage, at rect: CGRect) {
         let ctx = bitmap.context
         ctx.saveGState()
-        ctx.setBlendMode(.copy)
+        ctx.setBlendMode(.normal)
         ctx.interpolationQuality = .none
         ctx.draw(image, in: rect.integral)
         ctx.restoreGState()
+        isDirty = true
     }
 }

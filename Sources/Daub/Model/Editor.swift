@@ -91,7 +91,7 @@ final class Editor: ObservableObject {
     func open(_ url: URL) {
         do {
             let image = try ImageFile.read(url)
-            replaceDocument(PaintDocument(image: image, url: url))
+            replaceDocument(try PaintDocument(image: image, url: url))
         } catch {
             present(error)
         }
@@ -113,6 +113,7 @@ final class Editor: ObservableObject {
     }
 
     private func write(to url: URL) -> Bool {
+        canvas?.endActiveDrag()
         canvas?.commitFloatingSelection()
         guard let image = document.bitmap.makeImage() else { return false }
         do {
@@ -137,8 +138,9 @@ final class Editor: ObservableObject {
     /// Unsaved work is the one thing an app this small must never lose silently.
     @discardableResult
     func confirmDiscardIfNeeded() -> Bool {
-        canvas?.commitFloatingSelection()
-        guard document.isDirty else { return true }
+        // Do NOT commit the floating selection here: the user may still press Cancel, and
+        // a committed float cannot be picked back up to carry on moving it.
+        guard document.isDirty || canvas?.hasFloatingSelection == true else { return true }
         let alert = NSAlert()
         alert.messageText = "Save changes to “\(document.displayName)”?"
         alert.informativeText = "Your changes will be lost if you don’t save them."
@@ -146,7 +148,7 @@ final class Editor: ObservableObject {
         alert.addButton(withTitle: "Discard")
         alert.addButton(withTitle: "Cancel")
         switch alert.runModal() {
-        case .alertFirstButtonReturn: return save()
+        case .alertFirstButtonReturn: return save()      // save() commits the float itself
         case .alertSecondButtonReturn: return true
         default: return false
         }

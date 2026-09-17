@@ -57,6 +57,19 @@ tile edge was ragged. Masters live in the warehouse at
 `2d_assets/pictures/icons/app/branding/paintbrush/daub` — both the raw render and the
 finished tile, so another project can reuse either.
 
+## Reviewed
+
+A three-seat external panel (OpenAI / xAI / Google, reading the code) went over the first
+two commits. Fixed from it: the screen redraw copied the whole canvas every frame;
+"Rotate Right" turned the picture left; pasting a transparent PNG punched holes in an
+opaque canvas; a save landing mid-airbrush cleared the dirty flag while the spray timer
+still painted; ⌘W ran the unsaved-work alert after the window was already gone;
+cancelling New/Open still committed a floating selection; a fill that changed nothing
+still cost an undo step; the text tool baked its string at the field's frame origin
+rather than where the cell drew it; and opening a malformed image could trap on a huge
+allocation. `PanelFixTests` pins the testable half. One panel claim — that the pixel grid
+double-scales — was wrong: the grid draws after `restoreGState`, unscaled.
+
 ## Not there yet
 
 Layers, curve tool, free-form selection, polygon tool, multi-line text boxes (the text

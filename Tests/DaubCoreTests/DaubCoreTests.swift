@@ -197,3 +197,87 @@ final class CoordinateSpaceTests: XCTestCase {
         XCTAssertEqual(b.pixel(x: 7, y: 0).g, 255, "below the wall untouched")
     }
 }
+
+/// Fixes that came out of the 2026-09-17 review panel. Each test names the symptom the
+/// user would have hit, because that is the part worth not regressing.
+final class PanelFixTests: XCTestCase {
+    private func white() -> CGColor { CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1) }
+
+    /// "Rotate Right" was turning the picture left: CoreGraphics rotates counter-clockwise
+    /// for a positive angle in its y-up space, so the sign that reads correctly is wrong.
+    func testRotateRightTurnsClockwise() {
+        let b = Bitmap(width: 4, height: 2, fill: white())
+        b.setPixel(x: 0, y: 1, to: RGBA(r: 255, g: 0, b: 0))      // visually top-left
+
+        let right = b.rotatedQuarterTurn(clockwise: true, fill: white())
+        XCTAssertEqual(right.width, 2)
+        XCTAssertEqual(right.height, 4)
+        // Clockwise sends the top-left corner to the top-right.
+        XCTAssertEqual(right.pixel(x: right.width - 1, y: right.height - 1), RGBA(r: 255, g: 0, b: 0))
+
+        let left = b.rotatedQuarterTurn(clockwise: false, fill: white())
+        // Counter-clockwise sends it to the bottom-left.
+        XCTAssertEqual(left.pixel(x: 0, y: 0), RGBA(r: 255, g: 0, b: 0))
+    }
+
+    func testFlipAndInvertAreTheirOwnInverse() {
+        let b = Bitmap(width: 8, height: 8, fill: white())
+        b.setPixel(x: 0, y: 7, to: RGBA(r: 12, g: 34, b: 56))
+        b.flip(horizontally: true)
+        XCTAssertEqual(b.pixel(x: 7, y: 7), RGBA(r: 12, g: 34, b: 56))
+        b.flip(horizontally: true)
+        XCTAssertEqual(b.pixel(x: 0, y: 7), RGBA(r: 12, g: 34, b: 56))
+
+        b.invertColours()
+        XCTAssertEqual(b.pixel(x: 0, y: 7), RGBA(r: 243, g: 221, b: 199))
+        b.invertColours()
+        XCTAssertEqual(b.pixel(x: 0, y: 7), RGBA(r: 12, g: 34, b: 56))
+    }
+
+    /// The screen redraw draws through `liveImage` instead of copying the canvas every
+    /// frame. That is only correct if the image reports pixels written *after* it was made.
+    func testLiveImageReadsThroughToLaterWrites() {
+        let b = Bitmap(width: 4, height: 4, fill: white())
+        let live = b.liveImage
+        XCTAssertNotNil(live)
+        b.setPixel(x: 1, y: 1, to: RGBA(r: 0, g: 0, b: 0))
+
+        let ctx = CGContext(data: nil, width: 4, height: 4, bitsPerComponent: 8, bytesPerRow: 16,
+                            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        ctx.draw(live!, in: CGRect(x: 0, y: 0, width: 4, height: 4))
+        let out = ctx.data!.assumingMemoryBound(to: UInt8.self)
+        // Row 2 from the top of the buffer is y = 1 in drawing coordinates.
+        XCTAssertEqual(out[2 * 16 + 1 * 4], 0, "the write after liveImage() must be visible")
+    }
+
+    func testCroppedLiveImageMatchesTheCopyingCrop() {
+        let b = Bitmap(width: 16, height: 16, fill: white())
+        b.context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 1, alpha: 1))
+        b.context.fill(CGRect(x: 8, y: 8, width: 8, height: 8))
+        let rect = CGRect(x: 8, y: 8, width: 8, height: 8)
+        guard let live = b.croppedLiveImage(in: rect), let copied = b.croppedImage(in: rect) else {
+            return XCTFail("both crops should succeed")
+        }
+        XCTAssertEqual(live.width, copied.width)
+        XCTAssertEqual(live.height, copied.height)
+    }
+
+    /// Opening a malformed image must not trap the process on a 1.5 GB allocation.
+    func testOversizeCanvasThrowsInsteadOfTrapping() {
+        XCTAssertThrowsError(try Bitmap.checked(width: 100_000, height: 100_000))
+        XCTAssertThrowsError(try Bitmap.checked(width: 0, height: 10))
+        XCTAssertNoThrow(try Bitmap.checked(width: 4096, height: 4096))
+    }
+
+    /// Filling a region with the colour it already is used to cost an undo step.
+    func testDiscardedCheckpointLeavesNoUndoStep() {
+        let h = UndoHistory()
+        let b = Bitmap(width: 4, height: 4, fill: white())
+        h.record(b.makeImage())
+        XCTAssertTrue(h.canUndo)
+        XCTAssertNil(FloodFill.fill(b, x: 0, y: 0, with: RGBA(r: 255, g: 255, b: 255)))
+        h.discardLastCheckpoint()
+        XCTAssertFalse(h.canUndo, "a no-op fill must not leave a step to undo")
+    }
+}

@@ -16,7 +16,18 @@ struct DaubApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// Closing the window must not quit. With terminate-on-close, ⌘W ran the unsaved-work
+    /// alert *after* the window was already gone, so pressing Cancel left an app running
+    /// with no canvas and no way back to the drawing. Closing now just hides it; the
+    /// drawing stays in memory and clicking the Dock icon brings it back.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag, let window = sender.windows.first {
+            window.makeKeyAndOrderFront(nil)
+        }
+        return true
+    }
 
     /// Quitting is the commonest way to lose a drawing, and the one path that had no
     /// prompt: New and Open asked, ⌘Q did not.

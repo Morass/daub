@@ -91,8 +91,18 @@ final class CanvasView: NSView {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         ctx.interpolationQuality = .none
 
-        if let image = doc.bitmap.makeImage() {
-            ctx.draw(image, in: CGRect(origin: .zero, size: scaledSize))
+        // `liveImage` reads through to the bitmap's buffer; cropping it to the dirty
+        // region means a stroke blits the pixels it touched, not the whole canvas.
+        if let image = doc.bitmap.liveImage {
+            let canvasRect = CGRect(x: dirtyRect.minX / zoom, y: dirtyRect.minY / zoom,
+                                    width: dirtyRect.width / zoom, height: dirtyRect.height / zoom)
+            let clip = canvasRect.integral.intersection(doc.bounds)
+            if clip.width >= 1, clip.height >= 1, clip != doc.bounds,
+               let part = doc.bitmap.croppedLiveImage(in: clip) {
+                ctx.draw(part, in: viewRect(fromCanvas: clip))
+            } else {
+                ctx.draw(image, in: CGRect(origin: .zero, size: scaledSize))
+            }
         }
 
         ctx.saveGState()
@@ -214,7 +224,10 @@ final class CanvasView: NSView {
             guard let rgba = RGBA(colour.cgColor) else { return }
             if let dirty = FloodFill.fill(doc.bitmap, x: px.x, y: px.y, with: rgba,
                                           tolerance: Int(editor.tolerance)) {
+                doc.markDirty()
                 invalidate(canvasRect: dirty)
+            } else {
+                doc.cancelCheckpoint()          // clicked a region already that colour
             }
             editor.didCommit()
 
@@ -350,6 +363,7 @@ final class CanvasView: NSView {
             guard let rgba = RGBA(colour.cgColor) else { return }
             let size = Int(editor.tool == .eraser ? editor.eraserSize : editor.pencilSize)
             let dirty = Raster.line(doc.bitmap, from: pixel(a), to: pixel(b), size: max(1, size), color: rgba)
+            doc.markDirty()
             invalidate(canvasRect: dirty)
 
         default:
@@ -364,6 +378,7 @@ final class CanvasView: NSView {
             ctx.addLine(to: b)
             ctx.strokePath()
             ctx.restoreGState()
+            doc.markDirty()
             let pad = editor.strokeWidth
             invalidate(canvasRect: CGRect.normalised(from: a, to: b).insetBy(dx: -pad, dy: -pad))
         }
@@ -376,6 +391,7 @@ final class CanvasView: NSView {
                                  radius: Int(editor.sprayRadius),
                                  density: Int(editor.sprayDensity),
                                  color: rgba, using: &rng)
+        doc.markDirty()
         invalidate(canvasRect: dirty)
     }
 
@@ -520,7 +536,16 @@ final class CanvasView: NSView {
         doc.checkpoint()
         let font = NSFont(name: editor.fontName, size: editor.fontSize) ?? .systemFont(ofSize: editor.fontSize)
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: editor.primaryNS]
-        let origin = CGPoint(x: field.frame.minX / zoom, y: field.frame.minY / zoom)
+
+        // The cell insets its text inside the field's frame, and reports that rect in its
+        // own flipped space. Aligning the two bounding boxes is the difference between
+        // text that lands where it was typed and text a line-height off.
+        var textRect = field.bounds
+        if let cell = field.cell { textRect = cell.titleRect(forBounds: field.bounds) }
+        let insetX = textRect.minX
+        let insetYFromBottom = field.bounds.height - textRect.maxY
+        let origin = CGPoint(x: (field.frame.minX + insetX) / zoom,
+                             y: (field.frame.minY + insetYFromBottom) / zoom)
 
         let ns = NSGraphicsContext(cgContext: doc.context, flipped: false)
         NSGraphicsContext.saveGraphicsState()
@@ -597,7 +622,19 @@ final class CanvasView: NSView {
         if editor.tool != .select { commitFloatingSelection(); deselect() }
     }
 
+    /// Stop anything still painting. A timer that outlives its document keeps spraying
+    /// into a bitmap nobody is looking at — and, after a save, does it without marking
+    /// the file dirty again.
+    func endActiveDrag() {
+        sprayTimer?.invalidate()
+        sprayTimer = nil
+        drag = .none
+    }
+
+    var hasFloatingSelection: Bool { floating != nil }
+
     func documentDidChange() {
+        endActiveDrag()
         floating = nil
         selection = nil
         stopAnts()
