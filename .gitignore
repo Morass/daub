@@ -3,3 +3,7 @@ build/
 .swiftpm/
 *.xcodeproj
 .DS_Store
+
+# Hub-installed agent entrypoints: machine-local, not part of the app
+AGENTS.md
+CLAUDE.md
