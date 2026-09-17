@@ -9,7 +9,7 @@
 
 DESTDIR ?= /Applications
 
-.PHONY: all build run install uninstall test clean
+.PHONY: all build run install uninstall test clean readme-art
 
 all: build
 
@@ -31,3 +31,10 @@ test:
 
 clean:
 	rm -rf .build build
+
+## Re-render the picture at the top of the README, using the app's own engine.
+readme-art:
+	swift build
+	swiftc -O -I .build/debug/Modules Scripts/make-readme-art.swift \
+		.build/debug/DaubCore.build/*.o -o .build/make-readme-art
+	.build/make-readme-art Resources/readme-art.png
