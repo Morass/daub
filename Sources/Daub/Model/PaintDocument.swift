@@ -20,14 +20,23 @@ final class PaintDocument {
 
     var displayName: String { fileURL?.lastPathComponent ?? "Untitled" }
 
-    init(width: Int = 1024, height: Int = 768) {
-        bitmap = Bitmap(width: width, height: height, fill: NSColor.white.cgColor)
+    /// True when the canvas is allowed to hold transparency. It drives three things: the
+    /// checkerboard behind the picture, whether the eraser rubs through to nothing, and
+    /// what colour a canvas resize pads with.
+    private(set) var hasAlpha = false
+
+    init(width: Int = 1024, height: Int = 768, transparent: Bool = false) {
+        bitmap = Bitmap(width: width, height: height,
+                        fill: transparent ? nil : NSColor.white.cgColor)
+        hasAlpha = transparent
     }
 
     init(image: CGImage, url: URL?) throws {
         bitmap = try Bitmap.checked(width: image.width, height: image.height, fill: NSColor.white.cgColor)
         bitmap.context.draw(image, in: bitmap.bounds)
         fileURL = url
+        hasAlpha = image.alphaInfo != .none && image.alphaInfo != .noneSkipLast
+            && image.alphaInfo != .noneSkipFirst && bitmap.hasTransparency()
     }
 
     /// Mark the pixels changed without opening an undo step. Painting inside one drag
@@ -70,13 +79,15 @@ final class PaintDocument {
 
     func resizeCanvas(to newWidth: Int, _ newHeight: Int, fill: NSColor) {
         checkpoint()
-        bitmap = bitmap.resized(to: newWidth, newHeight, fill: fill.cgColor)
+        bitmap = bitmap.resized(to: newWidth, newHeight,
+                                fill: hasAlpha ? NSColor.clear.cgColor : fill.cgColor)
     }
 
     func scaleImage(to newWidth: Int, _ newHeight: Int) {
         checkpoint()
         guard let image = bitmap.makeImage() else { return }
-        let out = Bitmap(width: newWidth, height: newHeight, fill: NSColor.white.cgColor)
+        let out = Bitmap(width: newWidth, height: newHeight,
+                         fill: hasAlpha ? nil : NSColor.white.cgColor)
         out.context.interpolationQuality = .high
         out.context.draw(image, in: out.bounds)
         bitmap = out
@@ -84,9 +95,49 @@ final class PaintDocument {
 
     func clear(with color: NSColor) {
         checkpoint()
-        bitmap.context.setFillColor(color.cgColor)
-        bitmap.context.fill(bitmap.bounds)
+        if hasAlpha {
+            bitmap.clearAll()
+        } else {
+            bitmap.context.setFillColor(color.cgColor)
+            bitmap.context.fill(bitmap.bounds)
+        }
     }
+
+    /// Knock a colour out of the picture — the "my PNG has a white background and I want
+    /// it transparent" operation, which is the only reason most people ever want alpha.
+    @discardableResult
+    func makeColourTransparent(_ colour: NSColor, tolerance: Int) -> Int {
+        guard let target = RGBA(colour.cgColor) else { return 0 }
+        checkpoint()
+        let changed = bitmap.replaceColour(matching: target,
+                                           with: RGBA(r: 0, g: 0, b: 0, a: 0),
+                                           tolerance: tolerance)
+        if changed > 0 { hasAlpha = true }
+        return changed
+    }
+
+    @discardableResult
+    func replaceColour(_ colour: NSColor, with replacement: NSColor, tolerance: Int) -> Int {
+        guard let target = RGBA(colour.cgColor), let new = RGBA(replacement.cgColor) else { return 0 }
+        checkpoint()
+        return bitmap.replaceColour(matching: target, with: new, tolerance: tolerance)
+    }
+
+    /// Throw away everything outside `rect`. Cheap, and the operation a screenshot needs
+    /// most often.
+    func crop(to rect: CGRect) {
+        let r = rect.integral.intersection(bounds)
+        guard r.width >= 1, r.height >= 1, let cut = bitmap.croppedImage(in: r) else { return }
+        checkpoint()
+        let out = Bitmap(width: Int(r.width), height: Int(r.height),
+                         fill: hasAlpha ? nil : NSColor.white.cgColor)
+        out.context.draw(cut, in: out.bounds)
+        bitmap = out
+    }
+
+    /// The eraser rubs through to nothing on a canvas that holds alpha, and paints the
+    /// background colour on one that does not — which is what Paint has always done.
+    var eraserClearsToTransparency: Bool { hasAlpha }
 
     enum Transform { case flipHorizontal, flipVertical, rotateLeft, rotateRight, invert }
 

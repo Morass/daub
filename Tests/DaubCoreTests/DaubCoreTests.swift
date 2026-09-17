@@ -281,3 +281,60 @@ final class PanelFixTests: XCTestCase {
         XCTAssertFalse(h.canUndo, "a no-op fill must not leave a step to undo")
     }
 }
+
+/// Transparency: knocking a background out, erasing to nothing, and flattening for JPEG.
+final class TransparencyTests: XCTestCase {
+    private func white() -> CGColor { CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1) }
+
+    func testNewBitmapCanStartFullyTransparent() {
+        let b = Bitmap(width: 4, height: 4)          // no fill
+        XCTAssertTrue(b.hasTransparency())
+        XCTAssertEqual(b.pixel(x: 0, y: 0).a, 0)
+    }
+
+    func testOpaqueCanvasReportsNoTransparency() {
+        XCTAssertFalse(Bitmap(width: 4, height: 4, fill: white()).hasTransparency())
+    }
+
+    func testReplaceColourKnocksOutABackgroundWithinTolerance() {
+        let b = Bitmap(width: 8, height: 8, fill: white())
+        b.setPixel(x: 4, y: 4, to: RGBA(r: 250, g: 250, b: 250))    // near-white, e.g. JPEG noise
+        b.setPixel(x: 5, y: 5, to: RGBA(r: 10, g: 20, b: 30))       // real subject
+
+        let changed = b.replaceColour(matching: RGBA(r: 255, g: 255, b: 255),
+                                      with: RGBA(r: 0, g: 0, b: 0, a: 0), tolerance: 12)
+        XCTAssertEqual(changed, 63, "62 white pixels plus the near-white one")
+        XCTAssertEqual(b.pixel(x: 0, y: 0).a, 0)
+        XCTAssertEqual(b.pixel(x: 4, y: 4).a, 0, "tolerance caught the near-white pixel")
+        XCTAssertEqual(b.pixel(x: 5, y: 5), RGBA(r: 10, g: 20, b: 30), "the subject survives")
+        XCTAssertTrue(b.hasTransparency())
+    }
+
+    func testZeroToleranceLeavesNearMatchesAlone() {
+        let b = Bitmap(width: 4, height: 4, fill: white())
+        b.setPixel(x: 1, y: 1, to: RGBA(r: 250, g: 250, b: 250))
+        b.replaceColour(matching: RGBA(r: 255, g: 255, b: 255),
+                        with: RGBA(r: 0, g: 0, b: 0, a: 0), tolerance: 0)
+        XCTAssertEqual(b.pixel(x: 1, y: 1).a, 255)
+    }
+
+    /// JPEG has no alpha: written straight out, a transparent canvas comes back black.
+    func testFlatteningFillsHolesWithTheBackground() {
+        let b = Bitmap(width: 4, height: 4)
+        b.setPixel(x: 2, y: 2, to: RGBA(r: 200, g: 0, b: 0))
+        guard let flat = b.flattened(onto: white()) else { return XCTFail("flatten failed") }
+
+        let copy = Bitmap(width: 4, height: 4)
+        copy.replace(with: flat)
+        XCTAssertEqual(copy.pixel(x: 0, y: 0), RGBA(r: 255, g: 255, b: 255), "hole became white")
+        XCTAssertEqual(copy.pixel(x: 2, y: 2).r, 200, "the painted pixel survived")
+        XCTAssertFalse(copy.hasTransparency())
+    }
+
+    func testClearAllEmptiesTheCanvas() {
+        let b = Bitmap(width: 4, height: 4, fill: white())
+        b.clearAll()
+        XCTAssertTrue(b.hasTransparency())
+        XCTAssertEqual(b.pixel(x: 3, y: 3).a, 0)
+    }
+}

@@ -41,6 +41,15 @@ final class CanvasView: NSView {
     private var rng = SystemRandomNumberGenerator()
     private var textField: NSTextField?
 
+    /// Clone stamp: ⌥-click sets the source. The snapshot is taken at mouse-down so the
+    /// tool copies the picture as it was, not the paint it is laying down — otherwise a
+    /// stroke that crosses its own source smears into a feedback loop.
+    private var cloneSource: CGPoint?
+    private var cloneOffset: CGSize?
+    private var cloneSnapshot: CGImage?
+
+    var currentSelection: CGRect? { floating?.rect ?? selection }
+
     // MARK: Init
 
     init(editor: Editor) {
@@ -91,6 +100,8 @@ final class CanvasView: NSView {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         ctx.interpolationQuality = .none
 
+        if doc.hasAlpha { drawCheckerboard(ctx, in: dirtyRect) }
+
         // `liveImage` reads through to the bitmap's buffer; cropping it to the dirty
         // region means a stroke blits the pixels it touched, not the whole canvas.
         if let image = doc.bitmap.liveImage {
@@ -113,7 +124,15 @@ final class CanvasView: NSView {
             ctx.draw(floating.image, in: floating.rect)
         }
 
-        if case let .shape(start, current) = drag, let kind = editor.tool.shapeKind {
+        if case let .shape(start, current) = drag, editor.tool == .gradient {
+            ctx.setStrokeColor(NSColor.controlAccentColor.cgColor)
+            ctx.setLineWidth(1 / zoom)
+            ctx.setLineDash(phase: 0, lengths: [4 / zoom, 4 / zoom])
+            ctx.move(to: start)
+            ctx.addLine(to: current)
+            ctx.strokePath()
+            ctx.setLineDash(phase: 0, lengths: [])
+        } else if case let .shape(start, current) = drag, let kind = editor.tool.shapeKind {
             Shapes.draw(kind, in: ctx, from: start, to: current,
                         stroke: dragColour.cgColor,
                         fill: shapeFillColour.cgColor,
@@ -130,6 +149,29 @@ final class CanvasView: NSView {
         } else if let rect = floating?.rect ?? selection {
             drawAnts(ctx, rect: rect)
         }
+    }
+
+    /// The universal "this is nothing, not white" backdrop.
+    private func drawCheckerboard(_ ctx: CGContext, in rect: CGRect) {
+        let square: CGFloat = 8
+        ctx.saveGState()
+        ctx.setFillColor(NSColor.white.cgColor)
+        ctx.fill(rect)
+        ctx.setFillColor(NSColor(white: 0.86, alpha: 1).cgColor)
+        let x0 = (rect.minX / square).rounded(.down) * square
+        let y0 = (rect.minY / square).rounded(.down) * square
+        var y = y0
+        while y < rect.maxY {
+            var x = x0
+            while x < rect.maxX {
+                if Int((x / square).rounded(.down) + (y / square).rounded(.down)) % 2 == 0 {
+                    ctx.fill(CGRect(x: x, y: y, width: square, height: square))
+                }
+                x += square
+            }
+            y += square
+        }
+        ctx.restoreGState()
     }
 
     private func drawPixelGrid(_ ctx: CGContext) {
@@ -242,9 +284,35 @@ final class CanvasView: NSView {
             commitFloatingSelection()
             beginText(at: p)
 
-        case .line, .rectangle, .roundedRectangle, .ellipse:
+        case .gradient, .line, .rectangle, .roundedRectangle, .ellipse:
             commitFloatingSelection()
             drag = .shape(start: p, current: p)
+
+        case .clone:
+            commitFloatingSelection()
+            if event.modifierFlags.contains(.option) {
+                cloneSource = p
+                cloneOffset = nil
+                return
+            }
+            guard let source = cloneSource else {
+                NSSound.beep()          // nothing to clone from yet
+                return
+            }
+            doc.checkpoint()
+            cloneOffset = CGSize(width: p.x - source.x, height: p.y - source.y)
+            cloneSnapshot = doc.bitmap.makeImage()
+            drag = .stroke(last: p)
+            cloneDab(at: p)
+
+        case .colourReplace:
+            commitFloatingSelection()
+            let px = pixel(p)
+            let under = doc.bitmap.pixel(x: px.x, y: px.y)
+            guard let underColour = NSColor(cgColor: under.cgColor) else { return }
+            doc.replaceColour(underColour, with: colour, tolerance: Int(editor.tolerance))
+            needsDisplay = true
+            editor.didCommit()
 
         case .select:
             if let rect = floating?.rect ?? selection, rect.contains(p) {
@@ -303,7 +371,9 @@ final class CanvasView: NSView {
         switch drag {
         case .shape(let start, _):
             let end = event.modifierFlags.contains(.shift) ? constrain(start, p) : p
-            if let kind = editor.tool.shapeKind {
+            if editor.tool == .gradient {
+                applyGradient(from: start, to: end)
+            } else if let kind = editor.tool.shapeKind {
                 doc.checkpoint()
                 Shapes.draw(kind, in: doc.context, from: start, to: end,
                             stroke: dragColour.cgColor,
@@ -356,12 +426,68 @@ final class CanvasView: NSView {
 
     // MARK: - Painting primitives
 
+    /// Linear gradient from the foreground colour to the background colour along the drag,
+    /// clipped to the selection when there is one. Ten lines of CoreGraphics, and it is the
+    /// cheapest way to get a usable backdrop in a paint app with no layers.
+    private func applyGradient(from a: CGPoint, to b: CGPoint) {
+        let space = CGColorSpaceCreateDeviceRGB()
+        let start = editor.primaryNS.withAlphaComponent(editor.brushOpacity)
+        let end = editor.secondaryNS.withAlphaComponent(editor.brushOpacity)
+        guard let from = start.usingColorSpace(.sRGB)?.cgColor,
+              let to = end.usingColorSpace(.sRGB)?.cgColor,
+              let gradient = CGGradient(colorsSpace: space, colors: [from, to] as CFArray,
+                                        locations: [0, 1])
+        else { return }
+
+        doc.checkpoint()
+        let ctx = doc.context
+        ctx.saveGState()
+        if let selection { ctx.clip(to: selection.integral) }
+        ctx.drawLinearGradient(gradient, start: a, end: b,
+                               options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+        ctx.restoreGState()
+        doc.markDirty()
+        needsDisplay = true
+    }
+
+    /// One round dab of cloned pixels: clip to a circle, draw the snapshot shifted by the
+    /// source offset, so the brush reveals the other part of the picture.
+    private func cloneDab(at p: CGPoint) {
+        guard let snapshot = cloneSnapshot, let offset = cloneOffset else { return }
+        let radius = max(1, editor.strokeWidth) / 2
+        let ctx = doc.context
+        ctx.saveGState()
+        ctx.addEllipse(in: CGRect(x: p.x - radius, y: p.y - radius, width: radius * 2, height: radius * 2))
+        ctx.clip()
+        ctx.interpolationQuality = .none
+        ctx.draw(snapshot, in: CGRect(x: offset.width, y: offset.height,
+                                      width: CGFloat(doc.width), height: CGFloat(doc.height)))
+        ctx.restoreGState()
+        doc.markDirty()
+        invalidate(canvasRect: CGRect(x: p.x - radius, y: p.y - radius,
+                                      width: radius * 2, height: radius * 2))
+    }
+
     private func paintSegment(from a: CGPoint, to b: CGPoint) {
+        if editor.tool == .clone {
+            // Dab along the segment so a fast drag does not leave gaps.
+            let steps = max(1, Int(hypot(b.x - a.x, b.y - a.y) / max(1, editor.strokeWidth / 3)))
+            for i in 0...steps {
+                let t = CGFloat(i) / CGFloat(steps)
+                cloneDab(at: CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t))
+            }
+            return
+        }
         switch editor.tool {
         case .pencil, .eraser:
-            let colour = editor.tool == .eraser ? editor.secondaryNS : dragColour
-            guard let rgba = RGBA(colour.cgColor) else { return }
-            let size = Int(editor.tool == .eraser ? editor.eraserSize : editor.pencilSize)
+            let erasing = editor.tool == .eraser
+            let colour = erasing ? editor.secondaryNS : dragColour
+            var rgba = RGBA(colour.cgColor)
+            if erasing && doc.eraserClearsToTransparency {
+                rgba = RGBA(r: 0, g: 0, b: 0, a: 0)     // rub through to nothing
+            }
+            guard let rgba else { return }
+            let size = Int(erasing ? editor.eraserSize : editor.pencilSize)
             let dirty = Raster.line(doc.bitmap, from: pixel(a), to: pixel(b), size: max(1, size), color: rgba)
             doc.markDirty()
             invalidate(canvasRect: dirty)
@@ -370,7 +496,7 @@ final class CanvasView: NSView {
             let ctx = doc.context
             ctx.saveGState()
             ctx.setShouldAntialias(editor.antialias)
-            ctx.setStrokeColor(dragColour.cgColor)
+            ctx.setStrokeColor(dragColour.withAlphaComponent(editor.brushOpacity).cgColor)
             ctx.setLineWidth(editor.strokeWidth)
             ctx.setLineCap(.round)
             ctx.setLineJoin(.round)
@@ -514,16 +640,13 @@ final class CanvasView: NSView {
             ?? .systemFont(ofSize: editor.fontSize * zoom)
         field.textColor = editor.primaryNS
         field.placeholderString = "Type, then ⏎"
-        field.target = self
-        field.action = #selector(textFieldCommitted)
+        field.delegate = self
         let height = (field.font?.ascender ?? 0) - (field.font?.descender ?? 0) + 6
         field.frame = CGRect(x: p.x * zoom, y: p.y * zoom, width: 260, height: height)
         addSubview(field)
         window?.makeFirstResponder(field)
         textField = field
     }
-
-    @objc private func textFieldCommitted() { commitText() }
 
     /// Bake the overlay text into the bitmap at the point it was typed.
     func commitText() {
@@ -680,6 +803,29 @@ final class CanvasView: NSView {
         let next = editor.zoom * (1 + event.magnification)
         editor.zoom = max(0.25, min(32, next))
     }
+}
+
+extension CanvasView: NSTextFieldDelegate {
+    /// Return commits the text. `controlTextDidEndEditing` alone is not enough — the field
+    /// does not always end editing on Return inside a plain NSView — and the action/target
+    /// route it replaced fired inconsistently, which is why typed text only appeared once
+    /// the tool was switched.
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)):
+            commitText()
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            textField?.removeFromSuperview()
+            textField = nil
+            window?.makeFirstResponder(self)
+            return true
+        default:
+            return false
+        }
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) { commitText() }
 }
 
 extension CGRect {

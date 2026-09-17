@@ -21,6 +21,7 @@ final class Editor: ObservableObject {
     @Published var sprayRadius: Double = 14
     @Published var sprayDensity: Double = 20
     @Published var tolerance: Double = 0
+    @Published var brushOpacity: Double = 1
     @Published var shapeStyle: ShapeFill = .outline
     @Published var antialias = true
     @Published var fontSize: Double = 28
@@ -74,9 +75,9 @@ final class Editor: ObservableObject {
 
     // MARK: - File
 
-    func newDocument(width: Int = 1024, height: Int = 768) {
+    func newDocument(width: Int = 1024, height: Int = 768, transparent: Bool = false) {
         guard confirmDiscardIfNeeded() else { return }
-        replaceDocument(PaintDocument(width: width, height: height))
+        replaceDocument(PaintDocument(width: width, height: height, transparent: transparent))
     }
 
     func open() {
@@ -115,7 +116,14 @@ final class Editor: ObservableObject {
     private func write(to url: URL) -> Bool {
         canvas?.endActiveDrag()
         canvas?.commitFloatingSelection()
-        guard let image = document.bitmap.makeImage() else { return false }
+        // JPEG has no alpha channel: a transparent canvas written straight out comes back
+        // with black where the holes were, so flatten onto white first.
+        let ext = url.pathExtension.lowercased()
+        let needsFlattening = document.hasAlpha && (ext == "jpg" || ext == "jpeg")
+        let image = needsFlattening
+            ? document.bitmap.flattened(onto: NSColor.white.cgColor)
+            : document.bitmap.makeImage()
+        guard let image else { return false }
         do {
             try ImageFile.write(image, to: url)
             document.fileURL = url
@@ -149,7 +157,12 @@ final class Editor: ObservableObject {
         alert.addButton(withTitle: "Cancel")
         switch alert.runModal() {
         case .alertFirstButtonReturn: return save()      // save() commits the float itself
-        case .alertSecondButtonReturn: return true
+        case .alertSecondButtonReturn:
+            // The user has said the work is expendable. Recording that stops a second
+            // prompt when closing the window also ends up quitting the app.
+            document.isDirty = false
+            isDirty = false
+            return true
         default: return false
         }
     }
@@ -174,6 +187,40 @@ final class Editor: ObservableObject {
     func apply(_ transform: PaintDocument.Transform) {
         canvas?.commitFloatingSelection()
         document.apply(transform)
+        canvas?.documentDidChange()
+        didCommit()
+    }
+
+    /// Knock the background colour out of the picture, so it can be saved as a PNG with
+    /// real transparency. Uses the fill tolerance, which is the knob people already
+    /// understand for "near enough to this colour".
+    func makeBackgroundTransparent() {
+        let changed = document.makeColourTransparent(secondaryNS, tolerance: Int(tolerance))
+        if changed == 0 {
+            let alert = NSAlert()
+            alert.messageText = "No pixels matched the background colour."
+            alert.informativeText = "Daub knocks out the colour in the background well "
+                + "(currently \(secondaryNS.accessibilityName)). Pick the colour you want "
+                + "removed with the eyedropper — right-click sets the background — and raise "
+                + "the Fill tolerance if the edges are soft."
+            alert.runModal()
+            document.cancelCheckpoint()
+            return
+        }
+        canvas?.documentDidChange()
+        didCommit()
+    }
+
+    func replaceColourUnderBackground(with replacement: NSColor) {
+        document.replaceColour(secondaryNS, with: replacement, tolerance: Int(tolerance))
+        canvas?.documentDidChange()
+        didCommit()
+    }
+
+    func cropToSelection() {
+        guard let rect = canvas?.currentSelection else { return }
+        canvas?.commitFloatingSelection()
+        document.crop(to: rect)
         canvas?.documentDidChange()
         didCommit()
     }

@@ -16,18 +16,10 @@ struct DaubApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Closing the window must not quit. With terminate-on-close, ⌘W ran the unsaved-work
-    /// alert *after* the window was already gone, so pressing Cancel left an app running
-    /// with no canvas and no way back to the drawing. Closing now just hides it; the
-    /// drawing stays in memory and clicking the Dock icon brings it back.
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
-
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag, let window = sender.windows.first {
-            window.makeKeyAndOrderFront(nil)
-        }
-        return true
-    }
+    /// Closing the only window quits, as it should for a single-window app. The unsaved
+    /// prompt happens in `CloseGuard.windowShouldClose` — i.e. *before* the window goes —
+    /// so pressing Cancel keeps the drawing on screen instead of leaving a windowless app.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     /// Quitting is the commonest way to lose a drawing, and the one path that had no
     /// prompt: New and Open asked, ⌘Q did not.
@@ -48,6 +40,8 @@ struct DaubCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("New") { editor.newDocument() }.keyboardShortcut("n")
+            Button("New with Transparent Background") { editor.newDocument(transparent: true) }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
             Button("Open…") { editor.open() }.keyboardShortcut("o")
         }
 
@@ -79,6 +73,10 @@ struct DaubCommands: Commands {
             Button("Flip Vertical") { editor.apply(.flipVertical) }
             Button("Rotate Left") { editor.apply(.rotateLeft) }
             Button("Rotate Right") { editor.apply(.rotateRight) }
+            Divider()
+            Button("Crop to Selection") { editor.cropToSelection() }
+                .keyboardShortcut("k", modifiers: [.command, .shift])
+            Button("Make Background Colour Transparent") { editor.makeBackgroundTransparent() }
             Divider()
             Button("Invert Colours") { editor.apply(.invert) }.keyboardShortcut("i")
             Button("Clear Image") { editor.clearCanvas() }

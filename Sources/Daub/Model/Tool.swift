@@ -3,6 +3,7 @@ import SwiftUI
 
 enum Tool: String, CaseIterable, Identifiable, Sendable {
     case select, pencil, brush, airbrush, eraser, fill, picker, text
+    case clone, colourReplace, gradient
     case line, rectangle, roundedRectangle, ellipse
 
     var id: String { rawValue }
@@ -17,6 +18,9 @@ enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .fill: "Fill"
         case .picker: "Pick Colour"
         case .text: "Text"
+        case .clone: "Clone Stamp"
+        case .colourReplace: "Replace Colour"
+        case .gradient: "Gradient"
         case .line: "Line"
         case .rectangle: "Rectangle"
         case .roundedRectangle: "Rounded Rectangle"
@@ -36,6 +40,9 @@ enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .fill: "drop.fill"
         case .picker: "eyedropper"
         case .text: "textformat"
+        case .clone: "stamp"
+        case .colourReplace: "paintpalette"
+        case .gradient: nil
         case .line, .rectangle, .roundedRectangle, .ellipse: nil
         }
     }
@@ -50,6 +57,9 @@ enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .fill: "f"
         case .picker: "i"
         case .text: "t"
+        case .clone: "k"
+        case .colourReplace: "g"
+        case .gradient: "y"
         case .line: "l"
         case .rectangle: "r"
         case .roundedRectangle: "d"
@@ -73,7 +83,7 @@ enum Tool: String, CaseIterable, Identifiable, Sendable {
     var sizeKnob: SizeKnob? {
         switch self {
         case .pencil: .pencil
-        case .brush, .line, .rectangle, .roundedRectangle, .ellipse: .stroke
+        case .brush, .clone, .line, .rectangle, .roundedRectangle, .ellipse: .stroke
         case .eraser: .eraser
         case .airbrush: .spray
         default: nil
@@ -82,3 +92,45 @@ enum Tool: String, CaseIterable, Identifiable, Sendable {
 }
 
 enum SizeKnob { case pencil, stroke, eraser, spray }
+
+extension Tool {
+    /// Each tool carries its own colour so the toolbox reads as a set of instruments
+    /// rather than a grid of grey glyphs — the same trick a real paintbox plays. Kept
+    /// muted and consistent in hue so the selected state (a solid accent tile) still wins.
+    var tint: Color {
+        switch self {
+        case .select: Color(red: 0.42, green: 0.45, blue: 0.52)
+        case .pencil: Color(red: 0.86, green: 0.62, blue: 0.16)
+        case .brush: Color(red: 0.20, green: 0.45, blue: 0.82)
+        case .airbrush: Color(red: 0.24, green: 0.66, blue: 0.76)
+        case .eraser: Color(red: 0.90, green: 0.45, blue: 0.48)
+        case .fill: Color(red: 0.31, green: 0.58, blue: 0.86)
+        case .picker: Color(red: 0.36, green: 0.68, blue: 0.47)
+        case .text: Color(red: 0.45, green: 0.40, blue: 0.62)
+        case .clone: Color(red: 0.62, green: 0.48, blue: 0.36)
+        case .colourReplace: Color(red: 0.78, green: 0.38, blue: 0.62)
+        case .gradient: Color(red: 0.30, green: 0.52, blue: 0.78)
+        case .line: Color(red: 0.55, green: 0.52, blue: 0.60)
+        case .rectangle: Color(red: 0.36, green: 0.55, blue: 0.70)
+        case .roundedRectangle: Color(red: 0.40, green: 0.60, blue: 0.62)
+        case .ellipse: Color(red: 0.52, green: 0.50, blue: 0.74)
+        }
+    }
+
+    /// Tools whose edges CoreGraphics anti-aliases. The pencil, eraser, airbrush and the
+    /// pixel-exact tools ignore the setting entirely, so the checkbox is hidden for them
+    /// rather than shown doing nothing.
+    var honoursAntialiasing: Bool {
+        switch self {
+        case .brush, .clone, .line, .rectangle, .roundedRectangle, .ellipse: true
+        default: false
+        }
+    }
+
+    var usesOpacity: Bool {
+        switch self {
+        case .brush, .airbrush, .line, .rectangle, .roundedRectangle, .ellipse: true
+        default: false
+        }
+    }
+}

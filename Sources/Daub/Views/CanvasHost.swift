@@ -54,6 +54,21 @@ final class CanvasContainerView: NSView {
     }
 }
 
+final class CloseGuard: NSObject, NSWindowDelegate {
+    weak var next: NSWindowDelegate?
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        Editor.current?.confirmDiscardIfNeeded() ?? true
+    }
+
+    override func responds(to selector: Selector!) -> Bool {
+        if selector == #selector(windowShouldClose(_:)) { return true }
+        return super.responds(to: selector) || (next?.responds(to: selector) ?? false)
+    }
+
+    override func forwardingTarget(for selector: Selector!) -> Any? { next }
+}
+
 struct CanvasHost: NSViewRepresentable {
     @ObservedObject var editor: Editor
 
@@ -76,7 +91,10 @@ struct CanvasHost: NSViewRepresentable {
         container.refreshLayout()
 
         context.coordinator.observe(scroll: scroll, container: container)
-        DispatchQueue.main.async { canvas.window?.makeFirstResponder(canvas) }
+        DispatchQueue.main.async {
+            canvas.window?.makeFirstResponder(canvas)
+            context.coordinator.guardWindow(canvas.window)
+        }
         return scroll
     }
 
@@ -93,6 +111,16 @@ struct CanvasHost: NSViewRepresentable {
 
     final class Coordinator {
         private var token: NSObjectProtocol?
+        private let closeGuard = CloseGuard()
+
+        /// Insert ourselves in front of SwiftUI's window delegate so the red close button
+        /// asks about unsaved work. Everything we do not implement is forwarded straight
+        /// back to SwiftUI, which still owns the window.
+        func guardWindow(_ window: NSWindow?) {
+            guard let window, !(window.delegate is CloseGuard) else { return }
+            closeGuard.next = window.delegate
+            window.delegate = closeGuard
+        }
 
         func observe(scroll: NSScrollView, container: CanvasContainerView) {
             scroll.contentView.postsFrameChangedNotifications = true

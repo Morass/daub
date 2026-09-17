@@ -68,11 +68,32 @@ struct Toolbox: View {
             .controlSize(.small)
         }
 
-        if editor.tool != .pencil && editor.tool != .eraser {
+        if editor.tool.usesOpacity {
+            PercentSlider(title: "Opacity", value: $editor.brushOpacity)
+        }
+
+        if editor.tool.honoursAntialiasing {
             Toggle("Smooth edges", isOn: $editor.antialias)
                 .toggleStyle(.checkbox)
                 .controlSize(.small)
-                .help("Anti-alias brush and shape edges. The pencil is always hard-edged.")
+                .help("Anti-aliases this tool's edges. Most visible on a diagonal at a "
+                      + "width of 1–3 px, or zoomed in past 400%. The pencil, eraser and "
+                      + "airbrush are always hard-edged and ignore it.")
+        }
+
+        if editor.tool == .clone {
+            Text("⌥-click to set the source, then drag to paint from it.")
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
+        if editor.tool == .colourReplace {
+            LabelledSlider(title: "Tolerance", value: $editor.tolerance, range: 0...128, unit: "")
+            Text("Click a colour to swap every pixel of it for the foreground colour.")
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
 
         Divider()
@@ -94,12 +115,11 @@ private struct ToolButton: View {
 
     var body: some View {
         Button(action: action) {
-            ToolIcon(tool: tool)
+            ToolIcon(tool: tool, coloured: !isSelected)
                 .frame(width: 32, height: 28)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(isSelected ? Color.white : Color.primary)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(isSelected ? Color.accentColor : Color.clear)
@@ -122,6 +142,24 @@ struct SectionLabel: View {
             .font(.system(size: 10, weight: .semibold))
             .kerning(0.6)
             .foregroundStyle(.secondary)
+    }
+}
+
+struct PercentSlider: View {
+    let title: String
+    @Binding var value: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
+                Spacer()
+                Text("\(Int(value * 100))%")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            Slider(value: $value, in: 0.05...1).controlSize(.small)
+        }
     }
 }
 

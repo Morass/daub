@@ -45,7 +45,9 @@ public final class Bitmap {
         let h = min(max(1, height), Bitmap.maxDimension)
         let rowBytes = w * Bitmap.bytesPerPixel
         let buffer = UnsafeMutableRawPointer.allocate(byteCount: rowBytes * h, alignment: 16)
-        buffer.initializeMemory(as: UInt8.self, repeating: 255, count: rowBytes * h)
+        // Zeroed, i.e. fully transparent. Passing a `fill` is what makes a canvas opaque;
+        // this is what lets a document start out with a transparent background.
+        buffer.initializeMemory(as: UInt8.self, repeating: 0, count: rowBytes * h)
         guard let ctx = CGContext(
             data: buffer,
             width: w, height: h,
@@ -157,6 +159,10 @@ public final class Bitmap {
         return RGBA(r: p[0], g: p[1], b: p[2], a: p[3])
     }
 
+    /// The live image caches a provider over the buffer; a `context.clear` can move
+    /// CoreGraphics' idea of the backing store, so drop it whenever we bypass the context.
+    func cachedLiveImageIsStale() { cachedLiveImage = nil }
+
     public func setPixel(x: Int, y: Int, to c: RGBA) {
         guard x >= 0, y >= 0, x < width, y < height else { return }
         let p = storage.assumingMemoryBound(to: UInt8.self) + offset(x: x, y: y)
@@ -201,6 +207,51 @@ public struct PixelBuffer {
 }
 
 public extension Bitmap {
+    /// Wipe every pixel to fully transparent.
+    func clearAll() {
+        context.clear(bounds)
+        cachedLiveImageIsStale()
+    }
+
+    /// Replace every pixel within `tolerance` of `target`. This is how "make the white
+    /// background transparent" works, and the same routine serves a colour-replace tool:
+    /// the only difference is whether the replacement has an alpha of 0.
+    ///
+    /// - Returns: how many pixels changed.
+    @discardableResult
+    func replaceColour(matching target: RGBA, with replacement: RGBA, tolerance: Int) -> Int {
+        var changed = 0
+        withPixelBuffer { buffer in
+            for y in 0..<buffer.height {
+                for x in 0..<buffer.width where buffer.get(x, y).matches(target, tolerance: tolerance) {
+                    buffer.set(x, y, replacement)
+                    changed += 1
+                }
+            }
+        }
+        return changed
+    }
+
+    /// True when any pixel is not fully opaque — what decides whether the canvas is drawn
+    /// over a checkerboard and whether the eraser erases to nothing.
+    func hasTransparency() -> Bool {
+        withPixelBuffer { buffer in
+            for y in 0..<buffer.height {
+                for x in 0..<buffer.width where buffer.get(x, y).a != 255 { return true }
+            }
+            return false
+        }
+    }
+
+    /// Composite onto an opaque background — for JPEG, which has no alpha and would
+    /// otherwise render transparent pixels as black.
+    func flattened(onto background: CGColor) -> CGImage? {
+        guard let image = makeImage() else { return nil }
+        let out = Bitmap(width: width, height: height, fill: background)
+        out.context.draw(image, in: out.bounds)
+        return out.makeImage()
+    }
+
     /// Rotate a quarter turn. `clockwise` is what the user sees: CoreGraphics rotates
     /// counter-clockwise for a positive angle in its y-up space, so the sign here is the
     /// opposite of the one that looks right in the source.

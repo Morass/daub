@@ -7,15 +7,21 @@ import SwiftUI
 struct ToolIcon: View {
     let tool: Tool
     var size: CGFloat = 15
+    /// Selected tools sit on a solid accent tile, where a coloured glyph would muddy;
+    /// there the icon goes plain white instead.
+    var coloured: Bool = true
 
     var body: some View {
-        if let symbol = tool.symbol, ToolIcon.symbolExists(symbol) {
-            Image(systemName: symbol)
-                .font(.system(size: size, weight: .regular))
-        } else {
-            ShapeGlyph(tool: tool)
-                .frame(width: size + 3, height: size + 3)
+        Group {
+            if let symbol = tool.symbol, ToolIcon.symbolExists(symbol) {
+                Image(systemName: symbol)
+                    .font(.system(size: size, weight: .regular))
+            } else {
+                ShapeGlyph(tool: tool)
+                    .frame(width: size + 3, height: size + 3)
+            }
         }
+        .foregroundStyle(coloured ? tool.tint : Color.white)
     }
 
     /// SF Symbol availability shifts between macOS releases; a missing name renders as a
@@ -42,11 +48,21 @@ private struct ShapeGlyph: View {
                     path.addRoundedRect(in: r, cornerSize: CGSize(width: 4, height: 4))
                 case .ellipse:
                     path.addEllipse(in: r)
+                case .gradient:
+                    path.addRect(r)
                 default:
                     path.addEllipse(in: r.insetBy(dx: r.width / 3, dy: r.height / 3))
                 }
             }
             .stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            .overlay(
+                // The gradient tool shows what it does: a swatch fading out inside its box.
+                tool == .gradient
+                    ? AnyView(LinearGradient(colors: [tool.tint, tool.tint.opacity(0.05)],
+                                             startPoint: .leading, endPoint: .trailing)
+                        .mask(Path { $0.addRect(CGRect(origin: .zero, size: geo.size).insetBy(dx: 3, dy: 3)) }))
+                    : AnyView(EmptyView())
+            )
         }
     }
 }
