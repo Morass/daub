@@ -6,6 +6,9 @@ import UniformTypeIdentifiers
 /// Everything the chrome binds to. One instance per window.
 @MainActor
 final class Editor: ObservableObject {
+    /// Daub is a single-window app; the app delegate needs the live editor to ask about
+    /// unsaved work on quit, and there is no document architecture to route that through.
+    private(set) static weak var current: Editor?
     @Published private(set) var document = PaintDocument()
 
     // Tool state
@@ -37,6 +40,8 @@ final class Editor: ObservableObject {
 
     weak var canvas: CanvasView?
     private var previousTool: Tool = .pencil
+
+    init() { Editor.current = self }
 
     var primaryNS: NSColor { NSColor(primary) }
     var secondaryNS: NSColor { NSColor(secondary) }
@@ -130,7 +135,9 @@ final class Editor: ObservableObject {
     }
 
     /// Unsaved work is the one thing an app this small must never lose silently.
-    private func confirmDiscardIfNeeded() -> Bool {
+    @discardableResult
+    func confirmDiscardIfNeeded() -> Bool {
+        canvas?.commitFloatingSelection()
         guard document.isDirty else { return true }
         let alert = NSAlert()
         alert.messageText = "Save changes to “\(document.displayName)”?"

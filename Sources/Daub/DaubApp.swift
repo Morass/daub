@@ -18,6 +18,13 @@ struct DaubApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    /// Quitting is the commonest way to lose a drawing, and the one path that had no
+    /// prompt: New and Open asked, ⌘Q did not.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let editor = Editor.current else { return .terminateNow }
+        return editor.confirmDiscardIfNeeded() ? .terminateNow : .terminateCancel
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
