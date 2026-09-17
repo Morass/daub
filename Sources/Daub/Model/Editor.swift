@@ -155,11 +155,9 @@ final class Editor: ObservableObject {
     func undo() { if document.undo() { canvas?.documentDidChange(); didCommit() } }
     func redo() { if document.redo() { canvas?.documentDidChange(); didCommit() } }
 
-    func copy() { canvas?.copySelection() }
-    func cut() { canvas?.cutSelection() }
-    func paste() { canvas?.paste() }
+    // Cut/Copy/Paste/Select All are intentionally absent: they travel the responder
+    // chain to whichever view has focus, so the text tool keeps its own clipboard.
     func deleteSelection() { canvas?.deleteSelection() }
-    func selectAll() { canvas?.selectAll() }
     func deselect() { canvas?.deselect() }
 
     // MARK: - Image

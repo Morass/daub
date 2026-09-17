@@ -46,6 +46,17 @@ public final class Bitmap {
 
     public func makeImage() -> CGImage? { context.makeImage() }
 
+    /// Crop in *drawing* coordinates. `CGImage.cropping` works in the image's own
+    /// top-down space, so a selection near the bottom of the canvas would otherwise
+    /// come back as a copy of the top.
+    public func croppedImage(in rect: CGRect) -> CGImage? {
+        guard let full = makeImage() else { return nil }
+        let r = rect.integral.intersection(bounds)
+        guard r.width >= 1, r.height >= 1 else { return nil }
+        let topDown = CGRect(x: r.minX, y: CGFloat(height) - r.maxY, width: r.width, height: r.height)
+        return full.cropping(to: topDown)
+    }
+
     /// Overwrite every pixel with `image`, scaled to fit the current size.
     public func replace(with image: CGImage) {
         context.saveGState()

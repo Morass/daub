@@ -29,6 +29,9 @@ final class CanvasView: NSView {
 
     private var drag: Drag = .none
     private var dragColour: NSColor = .black
+    /// Which mouse button started this drag. Comparing NSColors would misfire whenever
+    /// the foreground and background colours happen to be equal.
+    private var dragIsSecondary = false
     private var selection: CGRect?
     private var floating: Floating?
 
@@ -59,6 +62,11 @@ final class CanvasView: NSView {
     var scaledSize: CGSize { CGSize(width: doc.size.width * zoom, height: doc.size.height * zoom) }
 
     // MARK: - Coordinates
+
+    /// Shapes stroke in the dragging button's colour and fill with the other one.
+    private var shapeFillColour: NSColor {
+        dragIsSecondary ? editor.primaryNS : editor.secondaryNS
+    }
 
     private func canvasPoint(_ event: NSEvent) -> CGPoint {
         let p = convert(event.locationInWindow, from: nil)
@@ -98,7 +106,7 @@ final class CanvasView: NSView {
         if case let .shape(start, current) = drag, let kind = editor.tool.shapeKind {
             Shapes.draw(kind, in: ctx, from: start, to: current,
                         stroke: dragColour.cgColor,
-                        fill: (dragColour == editor.primaryNS ? editor.secondaryNS : editor.primaryNS).cgColor,
+                        fill: shapeFillColour.cgColor,
                         style: editor.shapeStyle,
                         lineWidth: editor.strokeWidth,
                         antialias: editor.antialias)
@@ -150,12 +158,12 @@ final class CanvasView: NSView {
 
     // MARK: - Mouse
 
-    override func mouseDown(with event: NSEvent) { begin(event, colour: editor.primaryNS) }
+    override func mouseDown(with event: NSEvent) { begin(event, secondary: false) }
     override func mouseDragged(with event: NSEvent) { continueDrag(event) }
     override func mouseUp(with event: NSEvent) { endDrag(event) }
 
     // Right-drag paints the secondary colour, exactly as classic Paint does.
-    override func rightMouseDown(with event: NSEvent) { begin(event, colour: editor.secondaryNS) }
+    override func rightMouseDown(with event: NSEvent) { begin(event, secondary: true) }
     override func rightMouseDragged(with event: NSEvent) { continueDrag(event) }
     override func rightMouseUp(with event: NSEvent) { endDrag(event) }
 
@@ -172,11 +180,13 @@ final class CanvasView: NSView {
         editor.readout.pixel = CGPoint(x: px.x, y: doc.height - 1 - px.y)
     }
 
-    private func begin(_ event: NSEvent, colour: NSColor) {
+    private func begin(_ event: NSEvent, secondary: Bool) {
         window?.makeFirstResponder(self)
         commitText()
         let p = canvasPoint(event)
-        dragColour = colour
+        dragIsSecondary = secondary
+        dragColour = secondary ? editor.secondaryNS : editor.primaryNS
+        let colour = dragColour
 
         switch editor.tool {
         case .pencil, .brush, .eraser:
@@ -212,7 +222,7 @@ final class CanvasView: NSView {
             let px = pixel(p)
             let c = doc.bitmap.pixel(x: px.x, y: px.y)
             let picked = Color(nsColor: NSColor(cgColor: c.cgColor) ?? .black)
-            if colour == editor.secondaryNS { editor.secondary = picked } else { editor.primary = picked }
+            if secondary { editor.secondary = picked } else { editor.primary = picked }
             editor.revertToPreviousTool()
 
         case .text:
@@ -248,12 +258,13 @@ final class CanvasView: NSView {
             drag = .spray(point: p)
             sprayPuff(at: p)
 
-        case .shape(let start, _):
+        case .shape(let start, let previous):
             let end = event.modifierFlags.contains(.shift) ? constrain(start, p) : p
-            let old = CGRect.normalised(from: start, to: (try? currentShapeEnd()) ?? end)
+            let old = CGRect.normalised(from: start, to: previous)
             drag = .shape(start: start, current: end)
+            let pad = editor.strokeWidth + 2
             invalidate(canvasRect: old.union(CGRect.normalised(from: start, to: end))
-                .insetBy(dx: -editor.strokeWidth, dy: -editor.strokeWidth))
+                .insetBy(dx: -pad, dy: -pad))
 
         case .marquee(let start, _):
             let old = CGRect.normalised(from: start, to: p)
@@ -274,11 +285,6 @@ final class CanvasView: NSView {
         }
     }
 
-    private func currentShapeEnd() throws -> CGPoint {
-        if case let .shape(_, current) = drag { return current }
-        throw CocoaError(.featureUnsupported)
-    }
-
     private func endDrag(_ event: NSEvent) {
         let p = canvasPoint(event)
         switch drag {
@@ -288,7 +294,7 @@ final class CanvasView: NSView {
                 doc.checkpoint()
                 Shapes.draw(kind, in: doc.context, from: start, to: end,
                             stroke: dragColour.cgColor,
-                            fill: (dragColour == editor.primaryNS ? editor.secondaryNS : editor.primaryNS).cgColor,
+                            fill: shapeFillColour.cgColor,
                             style: editor.shapeStyle,
                             lineWidth: editor.strokeWidth,
                             antialias: editor.antialias)
@@ -394,7 +400,13 @@ final class CanvasView: NSView {
         editor.didCommit()
     }
 
-    func selectAll() {
+    override func selectAll(_ sender: Any?) { selectWholeCanvas() }
+    @objc func copy(_ sender: Any?) { copySelection() }
+    @objc func cut(_ sender: Any?) { cutSelection() }
+    @objc func paste(_ sender: Any?) { pasteFromClipboard() }
+    @objc func delete(_ sender: Any?) { deleteSelection() }
+
+    func selectWholeCanvas() {
         commitFloatingSelection()
         selection = doc.bounds
         editor.readout.selection = doc.size
@@ -439,14 +451,16 @@ final class CanvasView: NSView {
         deleteSelection()
     }
 
-    func paste() {
+    func pasteFromClipboard() {
         guard let image = ImageFile.readFromPasteboard() else { return }
         commitFloatingSelection()
+        // Switch tools *first*: changing tool commits any floating selection, which would
+        // otherwise stamp the pasted image the instant it was created.
+        editor.tool = .select
         doc.checkpoint()
         let rect = CGRect(x: 0, y: CGFloat(doc.height - image.height),
                           width: CGFloat(image.width), height: CGFloat(image.height))
         floating = Floating(image: image, rect: rect)
-        editor.tool = .select
         editor.readout.selection = rect.size
         startAnts()
         needsDisplay = true

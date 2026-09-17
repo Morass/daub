@@ -135,7 +135,7 @@ final class PaintDocument {
     // MARK: - Regions
 
     func image(in rect: CGRect) -> CGImage? {
-        bitmap.makeImage()?.cropping(to: rect.integral)
+        bitmap.croppedImage(in: rect)
     }
 
     func fillRegion(_ rect: CGRect, with color: NSColor) {

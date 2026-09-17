@@ -48,7 +48,16 @@ identical brush stroke. `CoordinateSpaceTests` pins it.
 `Editor.didCommit()`. Pointer position lives on a separate `CursorReadout` object so a
 mouse-move doesn't re-render the window.
 
+## Icon
+
+`Resources/AppIcon.icns` — generated through the hub image router (subscriptions only),
+then cropped and re-masked locally to Apple's icon geometry: an 824/1024 content square
+with a superellipse (n=5) corner curve and a baked contact shadow, because the model's own
+tile edge was ragged. Masters live in the warehouse at
+`2d_assets/pictures/icons/app/branding/paintbrush/daub` — both the raw render and the
+finished tile, so another project can reuse either.
+
 ## Not there yet
 
 Layers, curve tool, free-form selection, polygon tool, multi-line text boxes (the text
-tool is a single line), multiple windows, and a document icon.
+tool is a single line), multiple windows. Document icons (the per-file-type ones) are not drawn yet.

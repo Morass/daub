@@ -45,13 +45,9 @@ struct DaubCommands: Commands {
                 .keyboardShortcut("z", modifiers: [.command, .shift]).disabled(!editor.canRedo)
         }
 
-        CommandGroup(replacing: .pasteboard) {
-            Button("Cut") { editor.cut() }.keyboardShortcut("x")
-            Button("Copy") { editor.copy() }.keyboardShortcut("c")
-            Button("Paste") { editor.paste() }.keyboardShortcut("v")
-            Button("Delete") { editor.deleteSelection() }
-            Divider()
-            Button("Select All") { editor.selectAll() }.keyboardShortcut("a")
+        // Cut/Copy/Paste/Select All stay as the standard responder-chain items so they
+        // work inside the text tool and the sheets; only Deselect is ours to add.
+        CommandGroup(after: .pasteboard) {
             Button("Deselect") { editor.deselect() }.keyboardShortcut("d")
         }
 
