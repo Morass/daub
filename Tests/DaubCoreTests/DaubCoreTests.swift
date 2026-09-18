@@ -251,6 +251,28 @@ final class PanelFixTests: XCTestCase {
         XCTAssertEqual(out[2 * 16 + 1 * 4], 0, "the write after liveImage() must be visible")
     }
 
+    /// Regression: the canvas redrew as it had been *before* a whole-canvas operation.
+    ///
+    /// `liveImage` used to hand back one cached CGImage for the life of the buffer.
+    /// CoreGraphics treats a data provider over raw memory as immutable and caches the
+    /// raster it uploads for an image, keyed on the image — so the on-screen full-canvas
+    /// redraw kept painting the first raster it ever saw. Applying a gradient and then
+    /// drawing showed the gradient only inside the dirty rectangles the stroke repainted,
+    /// in blocks tracing the stroke, with stale pixels everywhere else. A distinct image
+    /// per call is the fix, so pin that rather than the symptom.
+    func testLiveImageIsNotCachedBetweenCalls() {
+        let b = Bitmap(width: 4, height: 4, fill: white())
+        guard let first = b.liveImage, let second = b.liveImage else {
+            return XCTFail("liveImage failed")
+        }
+        XCTAssertFalse(first === second, "liveImage must mint a new CGImage each call")
+
+        b.context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+        b.context.fill(b.bounds)
+        guard let third = b.liveImage else { return XCTFail("liveImage failed") }
+        XCTAssertFalse(third === first, "a whole-canvas fill must not hand back the old image")
+    }
+
     func testCroppedLiveImageMatchesTheCopyingCrop() {
         let b = Bitmap(width: 16, height: 16, fill: white())
         b.context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 1, alpha: 1))

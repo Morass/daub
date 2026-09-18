@@ -63,22 +63,29 @@ rotate and scale of a selection; levels and curves adjustments; brush shapes bey
 and square; multi-line text boxes (the text tool is a single line); multiple windows and
 documents; document icons for file types.
 
-## Open bug: rectangles visible around a stroke drawn over a gradient
+## Fixed: the canvas redrew as it was before a whole-canvas operation
 
-Reported 2026-09-18. Verified: the **pixels are clean** — rendering the document after a
-gradient plus brush strokes shows no artefact, so nothing is writing squares into the
-bitmap. The artefact is in the incremental screen repaint: `CanvasView.draw(_:)` blits only
-the dirty rectangle (`Bitmap.croppedLiveImage`), and the dirty rects chain along the stroke.
+Reported 2026-09-18 as "squares around the whole trail" after gradient → brush → pencil.
 
-Measured in isolation: at an integer zoom the partial blit is bit-identical to a full draw;
-at a fractional zoom (1.5, 0.75 — what ⌘0 *Fit in window* produces, it rounds to 1%) the
-patch edges differ from a full draw by 1–2 levels per channel. Invisible on flat artwork,
-visible as seams against a smooth gradient. Clipping and drawing the whole image instead of
-cropping gives the same seams, so cropping is not the cause — partial repaint at a
-non-integer scale is.
+`Bitmap.liveImage` handed back **one cached `CGImage`** for the life of the buffer.
+CoreGraphics treats a `CGDataProvider` over raw memory as immutable and caches the raster
+it uploads for an image, keyed on the image, so the full-canvas redraw in
+`CanvasView.draw(_:)` kept painting the first raster it ever saw. The partial path escaped
+it because `CGImage.cropping` mints a new image every call.
 
-Candidate fixes, none applied yet: snap zoom to whole multiples of `1/backingScaleFactor`
-so canvas pixels map to whole device pixels; or force a full redraw while the canvas is at
-a fractional zoom. Not yet confirmed to be the whole of what the reporter sees — the
-remaining suspect is `Bitmap.cachedLiveImage`, a `CGImage` held over live memory that is
-dropped only on the two paths that bypass the `CGContext` (`clearAll`, `replaceColour`).
+On screen that read as: apply a gradient and the canvas still looks like the old picture;
+draw over it and the gradient appears only inside the dirty rectangles the stroke
+repainted, in blocks tracing the stroke. The pixels were correct the whole time — the
+saved file and any fresh redraw were fine, which is why it could not be reproduced by
+rendering the document offscreen.
+
+Fix: `liveImage` mints a new `CGImage` per call. It copies nothing — a provider and an
+image header are pointer work — so the zero-copy redraw is intact. The stale-cache helper
+`cachedLiveImageIsStale()` is gone with the cache. Pinned by
+`testLiveImageIsNotCachedBetweenCalls`.
+
+**Known minor, not fixed:** at a fractional zoom (⌘0 *Fit in window* rounds to 1%) a
+partial repaint differs from a full one by 1–2 levels per channel along the patch edges —
+measured, invisible on flat artwork, a faint seam across a smooth gradient. Clipping
+instead of cropping gives the same seams, so it is partial repaint at a non-integer scale,
+not the crop. The fix would be snapping zoom to whole multiples of `1/backingScaleFactor`.

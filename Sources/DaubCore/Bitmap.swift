@@ -11,7 +11,6 @@ public final class Bitmap {
     public private(set) var height: Int
     public private(set) var context: CGContext
     private var storage: UnsafeMutableRawPointer
-    private var cachedLiveImage: CGImage?
 
     public static let bytesPerPixel = 4
 
@@ -76,12 +75,18 @@ public final class Bitmap {
     /// A CGImage that *reads through* to this bitmap's buffer instead of copying it.
     ///
     /// `makeImage()` memcpys the whole canvas; calling it once per frame costs 48 MB a
-    /// frame at 4000x3000, which is what the on-screen redraw was doing. The provider
-    /// here is created once per buffer and re-read by CoreGraphics at draw time, so a
-    /// redraw costs only the pixels it actually blits. Never hand this to anything that
-    /// outlives the next mutation — it is a window onto live memory, not a snapshot.
+    /// frame at 4000x3000, which is what the on-screen redraw was doing. This costs only
+    /// the pixels the caller actually blits. Never hand it to anything that outlives the
+    /// next mutation — it is a window onto live memory, not a snapshot.
+    ///
+    /// **A fresh CGImage every call, deliberately.** CoreGraphics treats a
+    /// `CGDataProvider` over raw memory as immutable and caches the raster it uploads for
+    /// an image — keyed on the image. Handing it the *same* CGImage twice let it redraw
+    /// the canvas as it was the first time: apply a gradient, and the screen kept showing
+    /// the old picture everywhere except the dirty rectangles a later stroke happened to
+    /// repaint, so the gradient appeared in blocks tracing the stroke. A new image each
+    /// time has no cache to hit. Building one is pointer work; it copies nothing.
     public var liveImage: CGImage? {
-        if let cached = cachedLiveImage { return cached }
         let byteCount = bytesPerRow * height
         guard let provider = CGDataProvider(dataInfo: nil, data: storage, size: byteCount,
                                             releaseData: { _, _, _ in })
@@ -92,7 +97,6 @@ public final class Bitmap {
                             bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
                             provider: provider, decode: nil, shouldInterpolate: false,
                             intent: .defaultIntent)
-        cachedLiveImage = image
         return image
     }
 
@@ -159,10 +163,6 @@ public final class Bitmap {
         return RGBA(r: p[0], g: p[1], b: p[2], a: p[3])
     }
 
-    /// The live image caches a provider over the buffer; a `context.clear` can move
-    /// CoreGraphics' idea of the backing store, so drop it whenever we bypass the context.
-    func cachedLiveImageIsStale() { cachedLiveImage = nil }
-
     public func setPixel(x: Int, y: Int, to c: RGBA) {
         guard x >= 0, y >= 0, x < width, y < height else { return }
         let p = storage.assumingMemoryBound(to: UInt8.self) + offset(x: x, y: y)
@@ -210,7 +210,6 @@ public extension Bitmap {
     /// Wipe every pixel to fully transparent.
     func clearAll() {
         context.clear(bounds)
-        cachedLiveImageIsStale()
     }
 
     /// Replace every pixel whose colour is within `tolerance` of `target`. This is how
@@ -248,7 +247,6 @@ public extension Bitmap {
                 }
             }
         }
-        if changed > 0 { cachedLiveImageIsStale() }
         return changed
     }
 
