@@ -45,14 +45,17 @@ public final class Tile {
 }
 
 /// The whole canvas at one moment, as a grid of tiles. Cheap to copy: the tiles are shared,
-/// not duplicated.
+/// not duplicated. Used for the steps a patch cannot express — the ones that change the
+/// size of the canvas, where "the pixels under this rectangle" means nothing.
 public struct CanvasSnapshot {
-    public let width: Int
-    public let height: Int
-    public let tileSize: Int
-    public let columns: Int
-    public let rows: Int
+    public let grid: TileGrid
     var tiles: [Tile]
+
+    public var width: Int { grid.width }
+    public var height: Int { grid.height }
+    public var tileSize: Int { grid.tileSize }
+    public var columns: Int { grid.columns }
+    public var rows: Int { grid.rows }
 
     /// What this snapshot would cost on its own, ignoring the tiles it shares with others.
     /// `UndoHistory.byteCount` is the number that matters; this one is for tests and docs.
@@ -62,7 +65,7 @@ public struct CanvasSnapshot {
     /// How many tiles this snapshot points at the *same* objects as `other` — i.e. how much
     /// of the picture the step between them left alone.
     public func sharedTileCount(with other: CanvasSnapshot) -> Int {
-        guard columns == other.columns, rows == other.rows else { return 0 }
+        guard grid == other.grid else { return 0 }
         var shared = 0
         for index in tiles.indices where tiles[index] === other.tiles[index] { shared += 1 }
         return shared
@@ -83,15 +86,12 @@ public extension Bitmap {
     /// snapshot did anyway.
     func snapshot(tileSize: Int = Bitmap.snapshotTileSize,
                   reusing previous: CanvasSnapshot? = nil) -> CanvasSnapshot {
-        // Clamped to the canvas as well as to 1: `(width + side - 1)` overflows for a
-        // `tileSize` of `Int.max`, and one tile covering everything is the right answer for
-        // any size past the canvas anyway.
-        let side = max(1, min(tileSize, max(width, height)))
-        let columns = (width + side - 1) / side
-        let rows = (height + side - 1) / side
+        let grid = TileGrid(width: width, height: height, tileSize: tileSize)
+        let side = grid.tileSize
+        let columns = grid.columns
+        let rows = grid.rows
         let reusable: CanvasSnapshot? = {
-            guard let previous, previous.width == width, previous.height == height,
-                  previous.tileSize == side else { return nil }
+            guard let previous, previous.grid == grid else { return nil }
             return previous
         }()
         var tiles: [Tile] = []
@@ -122,8 +122,40 @@ public extension Bitmap {
                 }
             }
         }
-        return CanvasSnapshot(width: width, height: height, tileSize: side,
-                              columns: columns, rows: rows, tiles: tiles)
+        return CanvasSnapshot(grid: grid, tiles: tiles)
+    }
+
+    /// One tile's bytes, in storage order — the currency both the patches and the snapshots
+    /// deal in.
+    func tile(row: Int, column: Int, grid: TileGrid) -> Tile {
+        let side = grid.tileSize
+        let y0 = row * side
+        let lines = min(side, height - y0)
+        let x0 = column * side
+        let lineBytes = min(side, width - x0) * Bitmap.bytesPerPixel
+        var bytes = ContiguousArray<UInt8>(repeating: 0, count: lineBytes * lines)
+        withRawPixels { base, _, _, rowBytes in
+            bytes.withUnsafeMutableBytes { dst in
+                guard let destination = dst.baseAddress else { return }
+                for line in 0..<lines {
+                    memcpy(destination + line * lineBytes,
+                           base + (y0 + line) * rowBytes + x0 * Bitmap.bytesPerPixel, lineBytes)
+                }
+            }
+        }
+        return Tile(bytes)
+    }
+
+    func write(_ tile: Tile, row: Int, column: Int, grid: TileGrid) {
+        let side = grid.tileSize
+        let y0 = row * side
+        let lines = min(side, height - y0)
+        let x0 = column * side
+        let lineBytes = min(side, width - x0) * Bitmap.bytesPerPixel
+        withRawPixels { base, _, _, rowBytes in
+            tile.write(into: base, x0: x0, y0: y0, rowBytes: rowBytes,
+                       lineBytes: lineBytes, lines: lines)
+        }
     }
 
     /// Put a snapshot back. The canvas must already be the snapshot's size — restoring one

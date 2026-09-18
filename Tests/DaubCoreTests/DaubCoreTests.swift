@@ -247,6 +247,81 @@ final class UndoHistoryTests: XCTestCase {
     private func white() -> CGColor { CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1) }
 }
 
+/// A patch remembers only what a step touched. This is what keeps a history of strokes from
+/// costing a canvas apiece.
+final class PixelPatchTests: XCTestCase {
+    private func white() -> CGColor { CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1) }
+    private let black = RGBA(r: 0, g: 0, b: 0)
+
+    func testAPatchCostsTheTilesItTouchedAndNoMore() {
+        let b = Bitmap(width: 2048, height: 2048, fill: white())      // 16 MB of canvas
+        let patch = PixelPatch(canvas: b)
+        patch.capture(b, rect: CGRect(x: 10, y: 10, width: 4, height: 4))
+        b.setPixel(x: 11, y: 11, to: black)
+        XCTAssertEqual(patch.tileCount, 1)
+        XCTAssertEqual(patch.byteCount, Bitmap.snapshotTileSize * Bitmap.snapshotTileSize * 4)
+        XCTAssertLessThan(patch.byteCount, 2048 * 2048 * 4 / 100, "a dot must not cost a canvas")
+    }
+
+    func testApplyingAPatchUndoesAndThenRedoes() {
+        let b = Bitmap(width: 300, height: 200, fill: white())
+        let patch = PixelPatch(canvas: b)
+        let spot = CGRect(x: 40, y: 30, width: 6, height: 6)
+        patch.capture(b, rect: spot)
+        b.context.setFillColor(black.cgColor)
+        b.context.fill(spot)
+        XCTAssertEqual(b.pixel(x: 42, y: 32), black)
+
+        XCTAssertTrue(patch.apply(to: b))
+        XCTAssertEqual(b.pixel(x: 42, y: 32), RGBA(r: 255, g: 255, b: 255), "undone")
+        XCTAssertTrue(patch.apply(to: b))
+        XCTAssertEqual(b.pixel(x: 42, y: 32), black, "and redone by the very same patch")
+    }
+
+    /// Tools work with the origin at the bottom left; memory runs top-down. A patch that
+    /// got that backwards would restore the mirror image of the right region.
+    func testCaptureUsesDrawingCoordinates() {
+        let b = Bitmap(width: 256, height: 256, fill: white())
+        let patch = PixelPatch(canvas: b)
+        let low = CGRect(x: 0, y: 0, width: 8, height: 8)      // bottom-left in drawing space
+        patch.capture(b, rect: low)
+        b.setPixel(x: 2, y: 2, to: black)                       // inside it
+        b.setPixel(x: 2, y: 253, to: black)                     // the mirrored position
+        patch.apply(to: b)
+        XCTAssertEqual(b.pixel(x: 2, y: 2), RGBA(r: 255, g: 255, b: 255), "the captured corner came back")
+        XCTAssertEqual(b.pixel(x: 2, y: 253), black, "the other corner was never captured")
+    }
+
+    func testCapturingTheSameTileTwiceKeepsTheOldestPixels() {
+        let b = Bitmap(width: 128, height: 128, fill: white())
+        let patch = PixelPatch(canvas: b)
+        let spot = CGRect(x: 1, y: 1, width: 2, height: 2)
+        patch.capture(b, rect: spot)            // white
+        b.setPixel(x: 1, y: 1, to: black)
+        patch.capture(b, rect: spot)            // must not overwrite the white it holds
+        patch.apply(to: b)
+        XCTAssertEqual(b.pixel(x: 1, y: 1), RGBA(r: 255, g: 255, b: 255),
+                       "a second touch in one step must not re-record the pixels")
+    }
+
+    func testAPatchIgnoresACanvasThatChangedSize() {
+        let b = Bitmap(width: 64, height: 64, fill: white())
+        let patch = PixelPatch(canvas: b)
+        patch.capture(b, rect: b.bounds)
+        let resized = Bitmap(width: 128, height: 64, fill: white())
+        XCTAssertFalse(patch.apply(to: resized), "a patch is only valid for its own geometry")
+    }
+
+    func testCaptureClipsToTheCanvas() {
+        let b = Bitmap(width: 40, height: 40, fill: white())
+        let patch = PixelPatch(canvas: b)
+        patch.capture(b, rect: CGRect(x: -500, y: -500, width: 5000, height: 5000))
+        XCTAssertEqual(patch.tileCount, 1)
+        patch.capture(b, rect: CGRect(x: 100, y: 100, width: 10, height: 10))
+        XCTAssertEqual(patch.tileCount, 1, "a rectangle entirely off the canvas captures nothing")
+    }
+}
+
 /// The tiles themselves: a snapshot must come back byte for byte, share what did not
 /// change, and survive a canvas that is not a whole number of tiles wide.
 final class CanvasSnapshotTests: XCTestCase {
