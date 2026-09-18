@@ -2,15 +2,9 @@
 
 ![Daub, with the picture below open in it](Resources/readme-screenshot.png)
 
-A native macOS paint app. Classic-Paint tools, modern finish, no dependencies, ~800 KB.
+A native macOS paint app: classic Paint tools, modern finish.
 
 ![daub](Resources/readme-art.png)
-
-*Both pictures are made by the app. The drawing is `Scripts/make-readme-art.swift`, which
-paints it with `DaubCore` — the same engine the brush and airbrush use: wobbly strokes,
-colour laid down before the outline and not quite inside it, and a drip. The screenshot is
-Daub rendering its own window into a PNG, with that drawing open. `make readme-art` and
-`make screenshot` re-make them.*
 
 macOS ships no raster paint app — Preview's Markup annotates, Freeform is vector, and the
 free simple option (Paintbrush) has been unmaintained for years. Daub fills that gap:
@@ -35,7 +29,6 @@ Tools) and nothing else — no Xcode project, no package manager, no signing cer
 | `make run` | Build and launch it |
 | `make install` | Build and install into `/Applications` |
 | `make install DESTDIR=~/Applications` | Install somewhere else |
-| `make test` | Run the engine tests (no GUI needed) |
 | `make uninstall` | Remove the installed copy |
 | `make clean` | Delete build artefacts |
 
@@ -123,8 +116,7 @@ Outline uses the dragging button's colour; the fill uses the other one.
    one undo step, so ⌘Z puts the pixels back where they started.
 5. ⌘⇧K crops the whole canvas to the selection.
 
-Selections are rectangular. A magic wand or lasso needs a mask-based selection model, which
-is a real piece of work rather than an afternoon — see *What's deliberately missing*.
+Selections are rectangular.
 
 ---
 
@@ -200,8 +192,7 @@ other image tool), the canvas size, and the selection size while you drag one.
 
 **Help ▸ Daub Help** (⌘?) opens a panel with every tool, every key and the recipes above,
 with a search field across the lot — type "transparent" or "clone" rather than hunting
-sections. The tool list is generated from the same values the toolbox uses, so it cannot
-drift out of date. It closes with the drawing.
+sections. It closes with the drawing.
 
 ---
 
@@ -233,78 +224,15 @@ past 800% and every dab is exactly one pixel.
 
 ## What "Smooth edges" actually does
 
-It anti-aliases the tools that go through CoreGraphics — brush, clone stamp, and the four
-shape tools. It is most visible on a **diagonal** at a width of 1–3 px, or zoomed past 400%:
-off gives you hard stair-steps, on gives you grey in-between pixels.
+It anti-aliases the brush, the clone stamp and the four shape tools. It is most visible on a
+**diagonal** at a width of 1–3 px, or zoomed past 400%: off gives you hard stair-steps, on
+gives you grey in-between pixels.
 
-It does nothing at all for the pencil, eraser, airbrush, fill or text, which are
-pixel-exact by design — so the checkbox is hidden for those rather than shown having no
-effect.
-
----
-
-## How it's built
-
-| Path | What it is |
-|---|---|
-| `Sources/DaubCore/` | The engine — no AppKit, no UI, fully testable: `Bitmap`, `FloodFill`, `Raster`, `Shapes`, `UndoHistory`. |
-| `Sources/Daub/Model/` | `Editor` (everything the chrome binds to), `PaintDocument` (pixels + history), `Tool`. |
-| `Sources/Daub/Views/` | `CanvasView` (the NSView doing all tool work), SwiftUI toolbox, palette, status bar. |
-| `Sources/Daub/IO/` | ImageIO reading and writing, and the pasteboard. |
-| `Scripts/build-app.sh` | Assembles the `.app` from the SwiftPM build. |
-| `Scripts/install.sh` | The above, plus install and un-quarantine. |
-
-### Three decisions worth knowing
-
-**One coordinate space.** A `CGBitmapContext` stores row 0 as the *top* of the picture but
-draws with the origin at the *bottom* left. The raster tools address memory; the brush and
-shapes go through CoreGraphics. `Bitmap`'s accessors flip on the way to memory so both
-speak drawing coordinates — without that, a pencil stroke lands mirrored against an
-identical brush stroke. `CoordinateSpaceTests` pins it.
-
-**SwiftUI never hears about a stroke.** `CanvasView` redraws itself and mutates
-`PaintDocument` directly; the chrome refreshes only at commit boundaries via
-`Editor.didCommit()`. Pointer position lives on a separate `CursorReadout` object so a
-mouse-move doesn't re-render the window. The screen draw reads *through* the bitmap's
-buffer (`liveImage`) and blits only the dirty region, rather than copying the canvas each
-frame.
-
-**Snapshot undo.** 32 full-canvas snapshots, taken before each mutation. Crude, but it
-survives every tool without per-tool inverse logic. The cap is a step count, not a byte
-budget — 32 steps of a 4096² canvas is about 2 GB.
-
----
-
-## Reviewed
-
-A three-seat external panel (OpenAI / xAI / Google, reading the code) went over the first
-two commits. Fixed from it: the screen redraw copied the whole canvas every frame; "Rotate
-Right" turned the picture left; pasting a transparent PNG punched holes in an opaque
-canvas; a save landing mid-airbrush cleared the dirty flag while the spray timer still
-painted; the unsaved-work alert ran after the window had already closed; cancelling
-New/Open still committed a floating selection; a fill that changed nothing still cost an
-undo step; the text tool baked its string at the field's frame origin rather than where the
-cell drew it; and opening a malformed image could trap on a huge allocation. One panel
-claim — that the pixel grid double-scales — was wrong: the grid draws after
-`restoreGState`, unscaled.
+It does nothing for the pencil, eraser, airbrush, fill or text, which are pixel-exact — so
+the checkbox is hidden for those rather than shown having no effect.
 
 ---
 
 ## Licence
 
 MIT — see [LICENSE](LICENSE). Use it, fork it, ship it.
-
----
-
-## What's deliberately missing
-
-**Layers.** The single biggest absence. Everything here assumes one bitmap.
-
-**Mask-based selection** — magic wand, lasso, "select by colour". The selection is a
-rectangle; making it a mask touches lift, move, paste, crop and every clip in the app.
-It is the right next feature, and it is not a small one.
-
-**Also absent:** smudge, blur and sharpen brushes; the curve and polygon tools; free
-rotate and scale of a selection; levels and curves adjustments; brush shapes beyond round
-and square; multi-line text boxes (the text tool is a single line); multiple windows and
-documents; document icons for file types.
