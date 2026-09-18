@@ -88,6 +88,20 @@ final class PaintDocument {
                                 fill: hasAlpha ? NSColor.clear.cgColor : fill.cgColor)
     }
 
+    /// Grow the canvas so a pasted image fits, keeping the picture in its top-left corner
+    /// and padding the new area with `fill`.
+    ///
+    /// It takes no checkpoint of its own: the paste that calls it has already taken one, so
+    /// the grow and the paste undo together as a single ⌘Z.
+    func growCanvas(to size: CGSize, fill: NSColor) {
+        let newWidth = max(width, Int(size.width.rounded()))
+        let newHeight = max(height, Int(size.height.rounded()))
+        guard newWidth != width || newHeight != height else { return }
+        bitmap = bitmap.resized(to: newWidth, newHeight,
+                                fill: hasAlpha ? NSColor.clear.cgColor : fill.cgColor)
+        isDirty = true
+    }
+
     func scaleImage(to newWidth: Int, _ newHeight: Int) {
         checkpoint()
         guard let image = bitmap.makeImage() else { return }

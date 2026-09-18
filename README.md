@@ -55,6 +55,11 @@ left open the full colour picker. `X` swaps them.
 **Undo is 32 steps deep** (⌘Z / ⇧⌘Z) and covers everything — strokes, shapes, text, fills,
 rotations, canvas resizes.
 
+**Paste a screenshot.** ⌃⇧⌘4 to grab part of the screen, then ⇧⌘V in Daub: the picture
+*becomes* the screenshot, at its own size, shrunk to fit the window if it is bigger. Plain
+⌘V pastes into the picture you already have — and if what you paste is bigger than the
+canvas, the canvas grows to hold it rather than cropping it.
+
 **Save** with ⌘S. PNG, JPEG or TIFF, decided by the extension you type.
 
 ---
@@ -93,6 +98,8 @@ Outline uses the dragging button's colour; the fill uses the other one.
 | `[` `]` | Shrink / grow the current tool |
 | ⇧ + drag | Constrain lines to 45°, rectangles to squares, ellipses to circles |
 | Right-drag | Paint with the background colour, any tool |
+| ⇧⌘V | New from Clipboard — the clipboard picture becomes the canvas, at its size |
+| ⌘V | Paste into this picture; the canvas grows if the paste is bigger than it |
 | ⌘R | Canvas Size… |
 | ⌘0 / ⌘1 | Fit in window / actual size |
 | ⌘+ / ⌘− | Zoom in / out (or pinch on a trackpad) |
@@ -111,12 +118,32 @@ Outline uses the dragging button's colour; the fill uses the other one.
    Hold ⌥ as you start the drag to leave the original where it was and move a copy.
    Arrow keys nudge by 1 px, ⇧+arrows by 10.
 3. ⌘C / ⌘X / ⌘V copy, cut and paste. A paste arrives as a floating selection at the top
-   left, already selected, so you can drag it into place.
+   left, already selected, so you can drag it into place. If it is larger than the canvas,
+   the canvas grows to hold all of it — undo puts both the pixels and the old size back in
+   one step. To have the clipboard picture *replace* the canvas instead, use ⇧⌘V.
 4. The move is committed when you switch tools, deselect, press Escape, or save — all in
    one undo step, so ⌘Z puts the pixels back where they started.
 5. ⌘⇧K crops the whole canvas to the selection.
 
 Selections are rectangular.
+
+---
+
+## Working from the clipboard
+
+Two ways in, and the difference is whether you are keeping what is already on the canvas.
+
+| | Does |
+|---|---|
+| **⇧⌘V** — *File ▸ New from Clipboard* | The clipboard picture becomes the picture. The canvas is resized to exactly its dimensions, and zoomed to fit the window if it is too big to show at 1:1. Asks before discarding unsaved work, like *Open*. |
+| **⌘V** — *Edit ▸ Paste* | Drops the clipboard picture into the picture you have, floating at the top left so you can drag it where you want. If it does not fit, the canvas grows to the size that holds it, padded with the background colour. |
+
+So the screenshot workflow is: ⌃⇧⌘4, drag a region, switch to Daub, ⇧⌘V, annotate, ⌘S.
+Nothing to resize by hand, and nothing quietly cropped.
+
+Daub reads TIFF, PNG and file references off the clipboard, which covers macOS
+screenshots, copies from Preview, Safari and Finder, and most other apps. If there is no
+picture on the clipboard, ⇧⌘V says so rather than doing nothing.
 
 ---
 

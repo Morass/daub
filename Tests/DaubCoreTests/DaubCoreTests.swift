@@ -447,3 +447,69 @@ final class TransparencyTests: XCTestCase {
         XCTAssertEqual(b.pixel(x: 3, y: 3).a, 0)
     }
 }
+
+/// Pasting a screenshot onto a smaller canvas: the rules for how far the canvas grows.
+final class CanvasFitTests: XCTestCase {
+    func testCanvasGrowsToHoldALargerImage() {
+        let grown = CanvasFit.grown(canvas: CGSize(width: 1024, height: 768),
+                                    toFit: CGSize(width: 2880, height: 1800))
+        XCTAssertEqual(grown, CGSize(width: 2880, height: 1800))
+    }
+
+    func testCanvasNeverShrinks() {
+        let canvas = CGSize(width: 1024, height: 768)
+        XCTAssertEqual(CanvasFit.grown(canvas: canvas, toFit: CGSize(width: 64, height: 64)), canvas,
+                       "a small paste leaves the picture the size it was")
+    }
+
+    func testGrowthIsPerAxis() {
+        // A wide, short image must not lop the bottom off a tall canvas.
+        let grown = CanvasFit.grown(canvas: CGSize(width: 400, height: 2000),
+                                    toFit: CGSize(width: 3000, height: 100))
+        XCTAssertEqual(grown, CGSize(width: 3000, height: 2000))
+    }
+
+    func testExactFitDoesNotResize() {
+        let canvas = CGSize(width: 800, height: 600)
+        XCTAssertEqual(CanvasFit.grown(canvas: canvas, toFit: canvas), canvas)
+        XCTAssertTrue(CanvasFit.fits(canvas, in: canvas))
+        XCTAssertFalse(CanvasFit.fits(CGSize(width: 801, height: 600), in: canvas))
+    }
+
+    /// An image past the pixel budget must not produce a canvas Daub cannot allocate, and
+    /// must not shrink the picture already open either.
+    func testOverLargeImageLeavesTheCanvasAlone() {
+        let canvas = CGSize(width: 1024, height: 768)
+        let huge = CGSize(width: 40_000, height: 40_000)
+        let grown = CanvasFit.grown(canvas: canvas, toFit: huge)
+        XCTAssertEqual(grown, canvas)
+    }
+
+    func testGrowthStaysInsideWhatBitmapWillAllocate() {
+        // Just inside the pixel budget: this one is allowed to grow.
+        let ok = CanvasFit.grown(canvas: CGSize(width: 100, height: 100),
+                                 toFit: CGSize(width: 8192, height: 8000))
+        XCTAssertEqual(ok, CGSize(width: 8192, height: 8000))
+        XCTAssertLessThanOrEqual(Int(ok.width) * Int(ok.height), Bitmap.maxPixels)
+
+        // Past it: the canvas is left alone rather than grown to something unallocatable.
+        let canvas = CGSize(width: 1024, height: 768)
+        XCTAssertEqual(CanvasFit.grown(canvas: canvas, toFit: CGSize(width: 9000, height: 9000)),
+                       canvas)
+    }
+
+    /// A CGFloat that cannot become an Int must not trap the conversion.
+    func testNonsenseSizesDoNotTrap() {
+        let canvas = CGSize(width: 640, height: 480)
+        XCTAssertEqual(CanvasFit.grown(canvas: canvas, toFit: CGSize(width: CGFloat.infinity, height: CGFloat.nan)),
+                       canvas)
+        XCTAssertEqual(CanvasFit.grown(canvas: canvas, toFit: CGSize(width: 1e30, height: 1e30)),
+                       canvas)
+    }
+
+    func testDegenerateSizesAreSurvivable() {
+        let grown = CanvasFit.grown(canvas: CGSize(width: 0, height: 0),
+                                    toFit: CGSize(width: 10, height: 10))
+        XCTAssertEqual(grown, CGSize(width: 10, height: 10))
+    }
+}

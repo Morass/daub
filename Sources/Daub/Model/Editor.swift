@@ -98,6 +98,39 @@ final class Editor: ObservableObject {
         }
     }
 
+    /// Turn whatever is on the clipboard into the picture, at its own size — the
+    /// screenshot workflow: ⌃⇧⌘4, then ⇧⌘V, and the canvas already matches the shot.
+    ///
+    /// This is deliberately not the same as ⌘V. A paste lands *in* the picture you are
+    /// working on; this one replaces it, so it asks about unsaved work exactly like Open.
+    func newFromClipboard() {
+        guard let image = ImageFile.readFromPasteboard() else {
+            noImageOnClipboard()
+            return
+        }
+        guard confirmDiscardIfNeeded() else { return }
+        do {
+            let new = try PaintDocument(image: image, url: nil)
+            // Pixels that exist nowhere on disk: dirty from the first frame, so closing
+            // the window asks before throwing a screenshot away.
+            new.markDirty()
+            replaceDocument(new)
+            // A 5K screenshot at 1:1 shows a corner of itself. Fit it to the window —
+            // shrinking only, so a small clipboard image is not blown up.
+            canvas?.zoomToFitIfTooLarge()
+        } catch {
+            present(error)
+        }
+    }
+
+    private func noImageOnClipboard() {
+        let alert = NSAlert()
+        alert.messageText = "There is no picture on the clipboard."
+        alert.informativeText = "Copy an image — or take a screenshot with ⌃⇧⌘4, which puts "
+            + "it straight on the clipboard — and try again."
+        alert.runModal()
+    }
+
     @discardableResult
     func save() -> Bool {
         guard let url = document.fileURL, ImageFile.canWrite(url) else { return saveAs() }

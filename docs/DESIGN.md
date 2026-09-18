@@ -19,6 +19,13 @@ how Daub is built lives here.
 window into a PNG — no screen recording, no permission dialog, so it works on a headless
 build machine.
 
+`make selftest` is the layer `swift test` cannot reach: `Support/SelfTest.swift` runs
+inside the real app (`DAUB_SELFTEST=clipboard`) and drives the actual paste path — canvas
+growth, top-left placement, single-step undo, the clipboard import — then exits non-zero on
+the first failure. The pure geometry it depends on (`DaubCore/CanvasFit`) is unit-tested
+separately, because that is where the nasty cases live: per-axis growth, the pixel budget,
+and CGFloat values that trap on the way to `Int`.
+
 ## Three decisions worth knowing
 
 **One coordinate space.** A `CGBitmapContext` stores row 0 as the *top* of the picture but
@@ -50,6 +57,21 @@ undo step; the text tool baked its string at the field's frame origin rather tha
 cell drew it; and opening a malformed image could trap on a huge allocation. One panel
 claim — that the pixel grid double-scales — was wrong: the grid draws after
 `restoreGState`, unscaled.
+
+## Clipboard
+
+Two entry points, deliberately different:
+
+- **⌘V** goes through `CanvasView.pasteFromClipboard`. It checkpoints, asks
+  `CanvasFit.grown` whether the canvas has to grow, grows it with
+  `PaintDocument.growCanvas` (which takes no checkpoint of its own, so the grow and the
+  paste are one undo step), then floats the image at the top left.
+- **⇧⌘V** is `Editor.newFromClipboard`: a whole new document at the clipboard image's
+  size, dirty from birth, shrink-zoomed to fit the window. It asks about unsaved work,
+  because it throws the old picture away.
+
+A clipboard image no allocatable canvas could hold leaves the canvas as it is rather than
+growing to the 67 Mpx limit and clipping anyway.
 
 ## Not implemented
 

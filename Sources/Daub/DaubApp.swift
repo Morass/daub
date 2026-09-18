@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         Screenshot.scheduleIfRequested()
+        SelfTest.runIfRequested()
     }
 }
 
@@ -44,6 +45,8 @@ struct DaubCommands: Commands {
             Button("New with Transparent Background") { editor.newDocument(transparent: true) }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             Button("Open…") { editor.open() }.keyboardShortcut("o")
+            Button("New from Clipboard") { editor.newFromClipboard() }
+                .keyboardShortcut("v", modifiers: [.command, .shift])
         }
 
         CommandGroup(replacing: .saveItem) {

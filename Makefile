@@ -4,12 +4,13 @@
 #   make run        build and launch it
 #   make install    build and install into /Applications (override with DESTDIR)
 #   make test       run the engine tests
+#   make selftest   drive the real app through the clipboard paths (needs a GUI session)
 #   make uninstall  remove the installed copy
 #   make clean      delete build artefacts
 
 DESTDIR ?= /Applications
 
-.PHONY: all build run install uninstall test clean readme-art screenshot
+.PHONY: all build run install uninstall test selftest clean readme-art screenshot
 
 all: build
 
@@ -28,6 +29,11 @@ uninstall:
 
 test:
 	swift test
+
+## End-to-end clipboard checks against the real app: paste, canvas growth, undo, import.
+## Needs a logged-in GUI session, and it does overwrite the clipboard while it runs.
+selftest: build
+	DAUB_SELFTEST=clipboard build/Daub.app/Contents/MacOS/Daub
 
 clean:
 	rm -rf .build build

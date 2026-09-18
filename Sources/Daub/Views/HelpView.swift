@@ -157,7 +157,8 @@ struct HelpView: View {
         ("⇧⌘N", "New picture with a transparent background"),
         ("⌘O / ⌘S", "Open · Save (⇧⌘S saves as)"),
         ("⌘Z / ⇧⌘Z", "Undo · Redo"),
-        ("⌘X ⌘C ⌘V", "Cut, copy and paste — paste lands as a floating selection"),
+        ("⌘X ⌘C ⌘V", "Cut, copy and paste — paste lands as a floating selection, and grows the canvas if it does not fit"),
+        ("⇧⌘V", "New from Clipboard: the clipboard picture becomes the canvas, at its own size"),
         ("⌘A / ⌘D", "Select all · Deselect"),
         ("⌘R", "Canvas size"),
         ("⇧⌘K", "Crop to the selection"),
@@ -176,6 +177,15 @@ struct HelpView: View {
     private struct Recipe { let title: String; let body: String }
 
     private static let recipes: [Recipe] = [
+        Recipe(title: "Annotate a screenshot",
+               body: """
+               Take the shot with ⌃⇧⌘4 — that copies it to the clipboard — then press ⇧⌘V \
+               here (File ▸ New from Clipboard). The canvas becomes the screenshot, at its \
+               exact size, scaled down on screen if it is bigger than the window. Draw on it \
+               and save with ⌘S. Plain ⌘V is the other half of this: it drops the clipboard \
+               picture into the picture you already have, growing the canvas if what you \
+               pasted is bigger than it. One ⌘Z undoes the paste and the growth together.
+               """),
         Recipe(title: "Save a PNG with a transparent background",
                body: """
                Either start from File ▸ New with Transparent Background (⇧⌘N), or knock the \

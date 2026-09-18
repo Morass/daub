@@ -640,6 +640,16 @@ final class CanvasView: NSView {
         // otherwise stamp the pasted image the instant it was created.
         editor.tool = .select
         doc.checkpoint()
+        // A screenshot is nearly always bigger than the canvas it is pasted onto, and a
+        // paste that silently loses everything past the edge is the worst way to find that
+        // out. Grow the canvas to hold it instead — inside the same undo step, so one ⌘Z
+        // puts both the pixels and the canvas size back.
+        let incoming = CGSize(width: image.width, height: image.height)
+        let grown = CanvasFit.grown(canvas: doc.size, toFit: incoming)
+        if grown != doc.size {
+            doc.growCanvas(to: grown, fill: editor.secondaryNS)
+            applyZoom()
+        }
         let rect = CGRect(x: 0, y: CGFloat(doc.height - image.height),
                           width: CGFloat(image.width), height: CGFloat(image.height))
         floatingChangedPixels = false           // a paste has not touched the canvas yet
@@ -811,6 +821,17 @@ final class CanvasView: NSView {
         setFrameSize(size)
         (superview as? CanvasContainerView)?.refreshLayout()
         needsDisplay = true
+    }
+
+    /// Shrink-to-fit: used after a whole picture arrives from the clipboard, where the
+    /// common case is a screenshot far bigger than the window. A picture that already fits
+    /// is left at whatever zoom it was, never magnified.
+    func zoomToFitIfTooLarge() {
+        guard let clip = enclosingScrollView?.contentView.bounds.size, clip.width > 40 else { return }
+        let margin: CGFloat = 40
+        let fit = min((clip.width - margin) / doc.size.width, (clip.height - margin) / doc.size.height)
+        guard fit < 1 else { return }
+        editor.zoom = max(0.05, (fit * 100).rounded() / 100)
     }
 
     func zoomToFit() {
