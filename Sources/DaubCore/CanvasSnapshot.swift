@@ -31,6 +31,10 @@ public final class Tile {
         }
     }
 
+    func hasSameBytes(as other: Tile) -> Bool {
+        self === other || bytes == other.bytes
+    }
+
     func write(into base: UnsafeMutablePointer<UInt8>, x0: Int, y0: Int,
                rowBytes: Int, lineBytes: Int, lines: Int) {
         guard bytes.count == lineBytes * lines else { return }
@@ -62,6 +66,15 @@ public struct CanvasSnapshot {
     public var byteCount: Int { tiles.reduce(0) { $0 + $1.byteCount } }
     public var tileCount: Int { tiles.count }
 
+    /// Byte-for-byte equality, for the self-test's check that a patch put every pixel back.
+    public func hasSamePixels(as other: CanvasSnapshot) -> Bool {
+        guard grid == other.grid else { return false }
+        for index in tiles.indices where !tiles[index].hasSameBytes(as: other.tiles[index]) {
+            return false
+        }
+        return true
+    }
+
     /// How many tiles this snapshot points at the *same* objects as `other` — i.e. how much
     /// of the picture the step between them left alone.
     public func sharedTileCount(with other: CanvasSnapshot) -> Int {
@@ -73,10 +86,11 @@ public struct CanvasSnapshot {
 }
 
 public extension Bitmap {
-    /// 128 x 128 pixels, 64 KB a tile: small enough that a pencil stroke keeps a couple of
-    /// them and large enough that a full canvas is a few hundred objects rather than
-    /// hundreds of thousands.
-    static let snapshotTileSize = 128
+    /// 64 x 64 pixels, 16 KB a tile. The size is a trade: a patch pays for whole tiles, so
+    /// smaller ones fit the shape of a stroke more tightly, while a whole-canvas snapshot
+    /// wants fewer, larger ones. 64 keeps a long stroke's patch at tens of kilobytes and a
+    /// 24-megapixel snapshot at six thousand objects.
+    static let snapshotTileSize = 64
 
     /// Copy the canvas into a tiled snapshot, reusing every tile of `previous` that still
     /// holds the same pixels.

@@ -1,5 +1,23 @@
 import CoreGraphics
 
+/// One step of history.
+///
+/// Nearly always a `patch`: the pixels under the area a tool touched, and its own inverse.
+/// A `whole` snapshot is kept for the steps that change the *size* of the canvas — a resize,
+/// a crop, a rotate, a paste that grows the picture — where "the pixels under this
+/// rectangle" has no meaning across the change.
+public enum UndoStep {
+    case patch(PixelPatch)
+    case whole(CanvasSnapshot)
+
+    var tiles: [Tile] {
+        switch self {
+        case .patch(let patch): return patch.storedTiles
+        case .whole(let snapshot): return snapshot.tiles
+        }
+    }
+}
+
 /// Snapshot undo, over tiles instead of whole images.
 ///
 /// A snapshot per step is still the only model that survives every tool without per-tool
@@ -15,8 +33,8 @@ import CoreGraphics
 public final class UndoHistory {
     public let limit: Int
     public let byteBudget: Int
-    private var past: [CanvasSnapshot] = []
-    private var future: [CanvasSnapshot] = []
+    private var past: [UndoStep] = []
+    private var future: [UndoStep] = []
 
     /// - Parameter byteBudget: 512 MB by default — about five whole-canvas steps of a
     ///   24-megapixel picture, or an unbounded number of ordinary strokes.
@@ -29,22 +47,24 @@ public final class UndoHistory {
     public var canRedo: Bool { !future.isEmpty }
     public var depth: Int { past.count }
 
-    /// The snapshot a new capture should share tiles with: the one immediately before it
-    /// in time. Pass it to `Bitmap.snapshot(reusing:)`.
-    public var newestPast: CanvasSnapshot? { past.last }
-    public var newestFuture: CanvasSnapshot? { future.last }
+    /// The newest whole-canvas snapshot on the undo side, for a new one to share tiles
+    /// with. Pass it to `Bitmap.snapshot(reusing:)`.
+    public var newestPastSnapshot: CanvasSnapshot? {
+        for step in past.reversed() { if case .whole(let snapshot) = step { return snapshot } }
+        return nil
+    }
 
     /// Distinct bytes actually held, counting a tile shared by twenty snapshots once.
     public var byteCount: Int {
         var seen = Set<ObjectIdentifier>()
         var total = 0
-        for snapshot in past {
-            for tile in snapshot.tiles where seen.insert(ObjectIdentifier(tile)).inserted {
+        for step in past {
+            for tile in step.tiles where seen.insert(ObjectIdentifier(tile)).inserted {
                 total += tile.byteCount
             }
         }
-        for snapshot in future {
-            for tile in snapshot.tiles where seen.insert(ObjectIdentifier(tile)).inserted {
+        for step in future {
+            for tile in step.tiles where seen.insert(ObjectIdentifier(tile)).inserted {
                 total += tile.byteCount
             }
         }
@@ -55,31 +75,43 @@ public final class UndoHistory {
     /// branch it cleared and the old steps its trim evicted. Without this, a click that
     /// turned out to change nothing could leave the user with *fewer* undo steps than
     /// before they clicked — on a big canvas, with none at all.
-    private var lastRecordUndid: (evicted: [CanvasSnapshot], clearedFuture: [CanvasSnapshot])?
+    private var lastRecordUndid: (evicted: [UndoStep], clearedFuture: [UndoStep])?
 
-    /// Call immediately *before* mutating the canvas.
-    public func record(_ snapshot: CanvasSnapshot?) {
-        guard let snapshot else { return }
+    /// Open a step. Call immediately *before* mutating the canvas.
+    public func record(_ step: UndoStep) {
         let clearedFuture = future
         future.removeAll()
-        past.append(snapshot)
+        past.append(step)
         lastRecordUndid = (trim(), clearedFuture)
     }
 
-    public func undo(current: CanvasSnapshot?) -> CanvasSnapshot? {
-        guard let previous = past.popLast() else { return nil }
-        if let current { future.append(current) }
-        lastRecordUndid = nil
+    /// Swap the step just recorded for another — how a step that turns out to change the
+    /// size of the canvas becomes a whole-canvas one.
+    public func replaceNewestStep(with step: UndoStep) {
+        guard !past.isEmpty else { return }
+        past[past.count - 1] = step
         _ = trim()
-        return previous
     }
 
-    public func redo(current: CanvasSnapshot?) -> CanvasSnapshot? {
-        guard let next = future.popLast() else { return nil }
-        if let current { past.append(current) }
+    /// - Parameter apply: put the step's pixels on the canvas and hand back the step that
+    ///   reverses it — a patch is its own inverse; a whole-canvas snapshot needs the canvas
+    ///   as it was a moment ago. Returning nil leaves the history untouched.
+    public func undo(applying apply: (UndoStep) -> UndoStep?) -> Bool {
+        guard let step = past.popLast() else { return false }
+        guard let inverse = apply(step) else { past.append(step); return false }
+        future.append(inverse)
         lastRecordUndid = nil
         _ = trim()
-        return next
+        return true
+    }
+
+    public func redo(applying apply: (UndoStep) -> UndoStep?) -> Bool {
+        guard let step = future.popLast() else { return false }
+        guard let inverse = apply(step) else { future.append(step); return false }
+        past.append(inverse)
+        lastRecordUndid = nil
+        _ = trim()
+        return true
     }
 
     /// Throw away the checkpoint just recorded, for an action that turned out to change
@@ -110,8 +142,8 @@ public final class UndoHistory {
     /// - Returns: the undo steps it evicted, oldest first, so a cancelled checkpoint can
     ///   put them back.
     @discardableResult
-    private func trim() -> [CanvasSnapshot] {
-        var evicted: [CanvasSnapshot] = []
+    private func trim() -> [UndoStep] {
+        var evicted: [UndoStep] = []
         if past.count > limit {
             evicted.append(contentsOf: past.prefix(past.count - limit))
             past.removeFirst(past.count - limit)

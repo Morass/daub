@@ -122,50 +122,154 @@ enum SelfTest {
         check(editor.canvasSize == CGSize(width: 1024, height: 768),
               "a paste that already fits does not resize the picture", "got \(editor.canvasSize)")
 
-        // 10. A history of ordinary strokes costs tiles, not canvases.
-        reset(editor, width: 2000, height: 1500)
-        let doc = editor.document
-        let canvasBytes = doc.width * doc.height * Bitmap.bytesPerPixel
-        for step in 0..<32 {
-            doc.checkpoint()
-            doc.fillRegion(CGRect(x: step * 4, y: 0, width: 3, height: 3), with: .systemRed)
-        }
-        check(doc.history.depth == 32, "thirty-two strokes are thirty-two undo steps",
-              "depth \(doc.history.depth)")
-        // Whole-image snapshots would be 33 canvases here: 396 MB.
-        check(doc.history.byteCount < canvasBytes * 2,
-              "a history of small strokes stays near one canvas, not thirty-three",
-              "\(doc.history.byteCount / 1_048_576) MB for a \(canvasBytes / 1_048_576) MB canvas")
-        for _ in 0..<32 { editor.undo() }
-        let unpainted = doc.bitmap.pixel(x: 1, y: doc.height - 2)
-        check(unpainted.r > 200 && unpainted.g > 200 && unpainted.b > 200,
-              "undoing all thirty-two of them puts every pixel back",
-              "corner pixel \(unpainted)")
-
-        // 11. The byte budget drops the oldest step rather than growing without end.
+        // 10. The byte budget drops the oldest step rather than growing without end.
         reset(editor, width: 1200, height: 900)
         let budgeted = PaintDocument(width: 1200, height: 900)
         for _ in 0..<40 {
-            budgeted.checkpoint()
-            budgeted.apply(.invert)          // every pixel differs: no tile can be shared
+            budgeted.apply(.rotateRight)     // a whole-canvas step: it cannot be a patch
         }
         check(budgeted.history.byteCount <= budgeted.history.byteBudget,
               "whole-canvas steps stay inside the undo memory budget",
               "\(budgeted.history.byteCount / 1_048_576) MB over a budget of \(budgeted.history.byteBudget / 1_048_576) MB")
         check(budgeted.history.canUndo, "and the history keeps at least one step", "no undo left")
 
-        // 12. A canvas past the pixel limit is refused, not allocated.
+        // 11. A canvas past the pixel limit is refused, not allocated.
         reset(editor, width: 1024, height: 768)
         editor.resizeCanvas(width: 32768, height: 32768, scaleContents: false)
         check(editor.canvasSize == CGSize(width: 1024, height: 768),
               "a resize past the pixel limit is refused instead of allocating 4 GB",
               "got \(editor.canvasSize)")
 
+        // 12. Every tool's undo puts back exactly what it changed. With verification on,
+        // each step keeps a full snapshot beside its patch and the two are compared after
+        // the undo — which is what catches a tool that draws somewhere it did not declare.
+        PaintDocument.verifiesUndo = true
+        let drags: [(String, Tool)] = [
+            ("pencil", .pencil), ("brush", .brush), ("eraser", .eraser), ("airbrush", .airbrush),
+            ("line", .line), ("rectangle", .rectangle), ("rounded rectangle", .roundedRectangle),
+            ("ellipse", .ellipse), ("gradient", .gradient),
+        ]
+        for (name, tool) in drags {
+            reset(editor, width: 400, height: 300)
+            paint(editor, canvas)                       // something to undo back to
+            editor.tool = tool
+            drag(canvas, from: CGPoint(x: 40, y: 40), to: CGPoint(x: 300, y: 220))
+            let changed = editor.document.history.canUndo
+            editor.undo()
+            check(changed && PaintDocument.takeVerificationFailures().isEmpty,
+                  "undo puts back every pixel the \(name) drew", "see above")
+        }
+
+        // The tools that work from a click rather than a drag.
+        reset(editor, width: 400, height: 300)
+        paint(editor, canvas)
+        editor.tool = .fill
+        click(canvas, at: CGPoint(x: 200, y: 150))
+        editor.undo()
+        check(PaintDocument.takeVerificationFailures().isEmpty,
+              "undo puts back every pixel the fill covered", "see above")
+
+        reset(editor, width: 400, height: 300)
+        paint(editor, canvas)
+        editor.tool = .clone
+        click(canvas, at: CGPoint(x: 60, y: 60), option: true)      // set the source
+        drag(canvas, from: CGPoint(x: 200, y: 150), to: CGPoint(x: 260, y: 190))
+        editor.undo()
+        check(PaintDocument.takeVerificationFailures().isEmpty,
+              "undo puts back every pixel the clone stamp covered", "see above")
+
+        // Text: the field is a real subview, so fill it in and commit it.
+        reset(editor, width: 400, height: 300)
+        editor.tool = .text
+        click(canvas, at: CGPoint(x: 40, y: 150))
+        if let field = canvas.subviews.compactMap({ $0 as? NSTextField }).first {
+            field.stringValue = "Daub"
+            canvas.commitText()
+            editor.undo()
+            check(PaintDocument.takeVerificationFailures().isEmpty,
+                  "undo puts back every pixel the text covered", "see above")
+        } else {
+            check(false, "the text tool opens a field to type in", "no field appeared")
+        }
+
+        // Whole-picture operations, including the ones that change the canvas size.
+        reset(editor, width: 400, height: 300)
+        paint(editor, canvas)
+        let doc2 = editor.document
+        doc2.clear(with: .systemBlue); editor.undo()
+        doc2.apply(.invert); editor.undo()
+        doc2.apply(.flipHorizontal); editor.undo()
+        doc2.apply(.flipVertical); editor.undo()
+        doc2.apply(.rotateRight); editor.undo()
+        doc2.replaceColour(.white, with: .systemPink, tolerance: 20); editor.undo()
+        doc2.crop(to: CGRect(x: 10, y: 10, width: 100, height: 80)); editor.undo()
+        doc2.resizeCanvas(to: 700, 500, fill: .white); editor.undo()
+        doc2.scaleImage(to: 200, 150); editor.undo()
+        check(PaintDocument.takeVerificationFailures().isEmpty,
+              "undo puts back every pixel of a whole-picture operation", "see above")
+        check(editor.canvasSize == CGSize(width: 400, height: 300),
+              "and the canvas is back to the size it started at", "got \(editor.canvasSize)")
+        PaintDocument.verifiesUndo = false
+
+        // 13. What that history costs: tiles under the strokes, no canvas anywhere.
+        reset(editor, width: 2000, height: 1500)
+        let doc3 = editor.document
+        editor.tool = .pencil
+        for step in 0..<32 {
+            drag(canvas, from: CGPoint(x: 20 + step * 5, y: 20), to: CGPoint(x: 20 + step * 5, y: 60))
+        }
+        let canvasBytes = doc3.width * doc3.height * Bitmap.bytesPerPixel
+        check(doc3.history.depth == 32, "thirty-two strokes are thirty-two undo steps",
+              "depth \(doc3.history.depth)")
+        check(doc3.history.byteCount < canvasBytes / 4,
+              "a history of strokes costs a fraction of one canvas",
+              "\(doc3.history.byteCount / 1024) KB against a canvas of \(canvasBytes / 1_048_576) MB")
+
         FileHandle.standardError.write(Data("selftest: \(failures == 0 ? "all checks passed" : "\(failures) failed")\n".utf8))
         exit(failures == 0 ? 0 : 1)
     }
 
+
+    // MARK: - Driving the tools
+
+    /// A synthetic mouse event at a point in *canvas* coordinates.
+    private static func mouse(_ type: NSEvent.EventType, _ canvas: CanvasView, at p: CGPoint,
+                              option: Bool = false) -> NSEvent? {
+        let inView = CGPoint(x: p.x * canvas.zoom, y: p.y * canvas.zoom)
+        let inWindow = canvas.convert(inView, to: nil)
+        return NSEvent.mouseEvent(with: type, location: inWindow,
+                                  modifierFlags: option ? [.option] : [],
+                                  timestamp: 0, windowNumber: canvas.window?.windowNumber ?? 0,
+                                  context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+    }
+
+    private static func drag(_ canvas: CanvasView, from a: CGPoint, to b: CGPoint) {
+        guard let down = mouse(.leftMouseDown, canvas, at: a),
+              let move = mouse(.leftMouseDragged, canvas, at: CGPoint(x: (a.x + b.x) / 2,
+                                                                     y: (a.y + b.y) / 2)),
+              let end = mouse(.leftMouseUp, canvas, at: b) else { return }
+        canvas.mouseDown(with: down)
+        canvas.mouseDragged(with: move)
+        canvas.mouseUp(with: end)
+    }
+
+    private static func click(_ canvas: CanvasView, at p: CGPoint, option: Bool = false) {
+        guard let down = mouse(.leftMouseDown, canvas, at: p, option: option),
+              let up = mouse(.leftMouseUp, canvas, at: p, option: option) else { return }
+        canvas.mouseDown(with: down)
+        canvas.mouseUp(with: up)
+    }
+
+    /// Something for the next operation to change, so an undo has work to do.
+    private static func paint(_ editor: Editor, _ canvas: CanvasView) {
+        editor.tool = .brush
+        drag(canvas, from: CGPoint(x: 30, y: 30), to: CGPoint(x: 340, y: 240))
+        editor.document.isDirty = false
+        editor.isDirty = false
+    }
+
     // MARK: - Helpers
+
 
     /// Back to a clean, undirtied document without the unsaved-work alert a headless run
     /// could never answer.

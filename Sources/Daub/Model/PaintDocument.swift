@@ -49,12 +49,62 @@ final class PaintDocument {
 
     // MARK: - History
 
-    /// Call once immediately before a mutation that should be undoable as a single step.
+    /// Open an undo step. Call once immediately before a mutation that should be undoable
+    /// as a single step — and then tell it, through `willTouch`, every rectangle the step
+    /// is about to draw into, *before* it draws there.
     func checkpoint() {
-        history.record(bitmap.snapshot(reusing: history.newestPast))
+        let patch = PixelPatch(canvas: bitmap)
+        history.record(.patch(patch))
+        openPatch = patch
+        if PaintDocument.verifiesUndo { verificationStack.append(bitmap.snapshot()) }
         wasDirtyBeforeCheckpoint = isDirty
         isDirty = true
     }
+
+    /// Open an undo step for an operation that changes the *size* of the canvas — a resize,
+    /// a crop, a rotate. There is no "the pixels under this rectangle" across a change like
+    /// that, so this one costs the old canvas.
+    func checkpointWholeCanvas() {
+        history.record(.whole(bitmap.snapshot(reusing: history.newestPastSnapshot)))
+        openPatch = nil
+        if PaintDocument.verifiesUndo { verificationStack.append(bitmap.snapshot()) }
+        wasDirtyBeforeCheckpoint = isDirty
+        isDirty = true
+    }
+
+    /// The step in progress turns out to change the canvas size after all (a paste that
+    /// grows the picture): swap its patch for a whole-canvas snapshot, taken now, before
+    /// the resize.
+    func promoteCheckpointToWholeCanvas() {
+        guard let patch = openPatch, patch.isEmpty else { return }
+        history.replaceNewestStep(with: .whole(bitmap.snapshot(reusing: history.newestPastSnapshot)))
+        openPatch = nil
+    }
+
+    /// Everything a step is about to change, in drawing coordinates, before it changes.
+    /// Round outwards: a rectangle that is too big costs a tile, one that is too small
+    /// costs correctness.
+    func willTouch(_ rect: CGRect) { openPatch?.capture(bitmap, rect: rect) }
+
+    /// For the operations that really do touch every pixel: invert, clear, a colour swap
+    /// across the whole picture.
+    func willTouchEverything() { openPatch?.captureAll(bitmap) }
+
+    /// The step being journalled, if any.
+    private(set) var openPatch: PixelPatch?
+
+    /// Self-test only: keep a full snapshot beside every step and check, on undo, that the
+    /// patch put the canvas back exactly. A tool that forgets to declare a rectangle it
+    /// draws into is otherwise a silent wrong-pixels bug, and this is what catches it.
+    static var verifiesUndo = false
+    private static var verificationFailures: [String] = []
+
+    /// Read the failures since the last read and clear them.
+    static func takeVerificationFailures() -> [String] {
+        defer { verificationFailures.removeAll() }
+        return verificationFailures
+    }
+    private var verificationStack: [CanvasSnapshot] = []
 
     /// What `isDirty` was before the checkpoint, so cancelling one can put it back: an
     /// action that turned out to change nothing must not leave a saved file looking edited.
@@ -62,18 +112,34 @@ final class PaintDocument {
 
     @discardableResult
     func undo() -> Bool {
-        let current = bitmap.snapshot(reusing: history.newestPast)
-        guard let previous = history.undo(current: current) else { return false }
-        adopt(previous)
-        return true
+        openPatch = nil
+        let undone = history.undo(applying: { apply($0) })
+        if undone, PaintDocument.verifiesUndo, let expected = verificationStack.popLast(),
+           !bitmap.snapshot().hasSamePixels(as: expected) {
+            PaintDocument.verificationFailures.append(
+                "undo did not put every pixel back — a tool drew somewhere it did not declare")
+        }
+        return undone
     }
 
     @discardableResult
     func redo() -> Bool {
-        let current = bitmap.snapshot(reusing: history.newestFuture)
-        guard let next = history.redo(current: current) else { return false }
-        adopt(next)
-        return true
+        openPatch = nil
+        return history.redo(applying: { apply($0) })
+    }
+
+    /// Put a step's pixels on the canvas and hand back the step that reverses it.
+    private func apply(_ step: UndoStep) -> UndoStep? {
+        switch step {
+        case .patch(let patch):
+            guard patch.apply(to: bitmap) else { return nil }
+            isDirty = true
+            return .patch(patch)                  // a patch is its own inverse
+        case .whole(let snapshot):
+            let current = bitmap.snapshot()
+            adopt(snapshot)
+            return .whole(current)
+        }
     }
 
     /// Restoring a snapshot may also restore a different canvas size (undoing a resize), in
@@ -90,7 +156,7 @@ final class PaintDocument {
     // MARK: - Whole-canvas operations
 
     func resizeCanvas(to newWidth: Int, _ newHeight: Int, fill: NSColor) {
-        checkpoint()
+        checkpointWholeCanvas()
         bitmap = bitmap.resized(to: newWidth, newHeight,
                                 fill: hasAlpha ? NSColor.clear.cgColor : fill.cgColor)
     }
@@ -110,7 +176,7 @@ final class PaintDocument {
     }
 
     func scaleImage(to newWidth: Int, _ newHeight: Int) {
-        checkpoint()
+        checkpointWholeCanvas()
         guard let image = bitmap.makeImage() else { return }
         let out = Bitmap(width: newWidth, height: newHeight,
                          fill: hasAlpha ? nil : NSColor.white.cgColor)
@@ -121,6 +187,7 @@ final class PaintDocument {
 
     func clear(with color: NSColor) {
         checkpoint()
+        willTouchEverything()
         if hasAlpha {
             bitmap.clearAll()
         } else {
@@ -135,6 +202,7 @@ final class PaintDocument {
     func makeColourTransparent(_ colour: NSColor, tolerance: Int, in region: CGRect? = nil) -> Int {
         guard let target = RGBA(colour.cgColor) else { return 0 }
         checkpoint()
+        willTouch(region ?? bounds)
         let changed = bitmap.replaceColour(matching: target,
                                            with: RGBA(r: 0, g: 0, b: 0, a: 0),
                                            tolerance: tolerance, in: region)
@@ -149,6 +217,7 @@ final class PaintDocument {
                        in region: CGRect? = nil) -> Int {
         guard let target = RGBA(colour.cgColor), let new = RGBA(replacement.cgColor) else { return 0 }
         checkpoint()
+        willTouch(region ?? bounds)
         let changed = bitmap.replaceColour(matching: target, with: new,
                                            tolerance: tolerance, in: region)
         if changed == 0 { cancelCheckpoint() }
@@ -160,7 +229,7 @@ final class PaintDocument {
     func crop(to rect: CGRect) {
         let r = rect.integral.intersection(bounds)
         guard r.width >= 1, r.height >= 1, let cut = bitmap.croppedImage(in: r) else { return }
-        checkpoint()
+        checkpointWholeCanvas()
         let out = Bitmap(width: Int(r.width), height: Int(r.height),
                          fill: hasAlpha ? nil : NSColor.white.cgColor)
         out.context.draw(cut, in: out.bounds)
@@ -174,7 +243,13 @@ final class PaintDocument {
     enum Transform { case flipHorizontal, flipVertical, rotateLeft, rotateRight, invert }
 
     func apply(_ transform: Transform) {
-        checkpoint()
+        switch transform {
+        case .rotateRight, .rotateLeft:
+            checkpointWholeCanvas()            // a quarter turn swaps the sides over
+        default:
+            checkpoint()
+            willTouchEverything()
+        }
         switch transform {
         case .flipHorizontal: bitmap.flip(horizontally: true)
         case .flipVertical: bitmap.flip(horizontally: false)
@@ -203,10 +278,13 @@ final class PaintDocument {
     /// with it the dirty flag that checkpoint raised.
     func cancelCheckpoint() {
         history.discardLastCheckpoint()
+        openPatch = nil
+        if PaintDocument.verifiesUndo { _ = verificationStack.popLast() }
         isDirty = wasDirtyBeforeCheckpoint
     }
 
     func fillRegion(_ rect: CGRect, with color: NSColor) {
+        willTouch(rect.integral)
         let ctx = bitmap.context
         ctx.saveGState()
         ctx.setBlendMode(.copy)
@@ -219,6 +297,7 @@ final class PaintDocument {
     /// transparency into a canvas the rest of the app assumes is opaque — which then
     /// survives into the exported file.
     func stamp(_ image: CGImage, at rect: CGRect) {
+        willTouch(rect.integral)
         let ctx = bitmap.context
         ctx.saveGState()
         ctx.setBlendMode(.normal)

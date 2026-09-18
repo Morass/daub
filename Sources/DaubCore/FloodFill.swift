@@ -5,10 +5,14 @@ import CoreGraphics
 /// The visited set is what makes a tolerance slider safe: when the replacement colour is
 /// itself within tolerance of the seed colour, a naive fill re-enters spans forever.
 public enum FloodFill {
+    /// - Parameter willTouch: called with each span, in drawing coordinates, *before* it is
+    ///   written — how the undo step journals the pixels a fill is about to cover. A fill
+    ///   discovers its own shape as it goes, so it cannot declare its area up front.
     /// - Returns: the dirty rect in bitmap coordinates, or nil when nothing changed.
     @discardableResult
     public static func fill(_ bitmap: Bitmap, x: Int, y: Int,
-                            with color: RGBA, tolerance: Int = 0) -> CGRect? {
+                            with color: RGBA, tolerance: Int = 0,
+                            willTouch: ((CGRect) -> Void)? = nil) -> CGRect? {
         let w = bitmap.width, h = bitmap.height
         guard x >= 0, y >= 0, x < w, y < h else { return nil }
         let seed = bitmap.pixel(x: x, y: y)
@@ -37,6 +41,7 @@ public enum FloodFill {
                 right -= 1
                 guard left <= right else { continue }
 
+                willTouch?(CGRect(x: left, y: sy, width: right - left + 1, height: 1))
                 for px in left...right {
                     visited[sy * width + px] = true
                     put(px, sy)

@@ -20,6 +20,7 @@ public final class PixelPatch {
     public var isEmpty: Bool { tiles.isEmpty }
     public var tileCount: Int { tiles.count }
     public var byteCount: Int { tiles.values.reduce(0) { $0 + $1.byteCount } }
+    var storedTiles: [Tile] { Array(tiles.values) }
 
     public init(canvas: Bitmap, tileSize: Int = Bitmap.snapshotTileSize) {
         grid = TileGrid(width: canvas.width, height: canvas.height, tileSize: tileSize)

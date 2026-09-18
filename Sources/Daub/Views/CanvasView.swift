@@ -274,7 +274,8 @@ final class CanvasView: NSView {
             guard let rgba = RGBA(colour.cgColor) else { return }
             doc.checkpoint()
             if let dirty = FloodFill.fill(doc.bitmap, x: px.x, y: px.y, with: rgba,
-                                          tolerance: Int(editor.tolerance)) {
+                                          tolerance: Int(editor.tolerance),
+                                          willTouch: { [doc] span in doc.willTouch(span) }) {
                 doc.markDirty()
                 invalidate(canvasRect: dirty)
             } else {
@@ -392,6 +393,8 @@ final class CanvasView: NSView {
                 applyGradient(from: start, to: end)
             } else if let kind = editor.tool.shapeKind {
                 doc.checkpoint()
+                let reach = editor.strokeWidth + 4
+                doc.willTouch(CGRect.normalised(from: start, to: end).insetBy(dx: -reach, dy: -reach))
                 Shapes.draw(kind, in: doc.context, from: start, to: end,
                             stroke: dragColour.cgColor,
                             fill: shapeFillColour.cgColor,
@@ -457,6 +460,7 @@ final class CanvasView: NSView {
         else { return }
 
         doc.checkpoint()
+        doc.willTouch(selection?.integral ?? doc.bounds)
         let ctx = doc.context
         ctx.saveGState()
         if let selection { ctx.clip(to: selection.integral) }
@@ -472,17 +476,18 @@ final class CanvasView: NSView {
     private func cloneDab(at p: CGPoint) {
         guard let snapshot = cloneSnapshot, let offset = cloneOffset else { return }
         let radius = max(1, editor.strokeWidth) / 2
+        let dab = CGRect(x: p.x - radius, y: p.y - radius, width: radius * 2, height: radius * 2)
+        doc.willTouch(dab.insetBy(dx: -2, dy: -2))
         let ctx = doc.context
         ctx.saveGState()
-        ctx.addEllipse(in: CGRect(x: p.x - radius, y: p.y - radius, width: radius * 2, height: radius * 2))
+        ctx.addEllipse(in: dab)
         ctx.clip()
         ctx.interpolationQuality = .none
         ctx.draw(snapshot, in: CGRect(x: offset.width, y: offset.height,
                                       width: CGFloat(doc.width), height: CGFloat(doc.height)))
         ctx.restoreGState()
         doc.markDirty()
-        invalidate(canvasRect: CGRect(x: p.x - radius, y: p.y - radius,
-                                      width: radius * 2, height: radius * 2))
+        invalidate(canvasRect: dab)
     }
 
     private func paintSegment(from a: CGPoint, to b: CGPoint) {
@@ -505,11 +510,15 @@ final class CanvasView: NSView {
             }
             guard let rgba else { return }
             let size = Int(erasing ? editor.eraserSize : editor.pencilSize)
+            doc.willTouch(CGRect.normalised(from: a, to: b)
+                .insetBy(dx: -CGFloat(size) - 2, dy: -CGFloat(size) - 2))
             let dirty = Raster.line(doc.bitmap, from: pixel(a), to: pixel(b), size: max(1, size), color: rgba)
             doc.markDirty()
             invalidate(canvasRect: dirty)
 
         default:
+            let reach = editor.strokeWidth + 2
+            doc.willTouch(CGRect.normalised(from: a, to: b).insetBy(dx: -reach, dy: -reach))
             let ctx = doc.context
             ctx.saveGState()
             ctx.setShouldAntialias(editor.antialias)
@@ -530,6 +539,8 @@ final class CanvasView: NSView {
     private func sprayPuff(at p: CGPoint) {
         guard let rgba = RGBA(dragColour.cgColor) else { return }
         let px = pixel(p)
+        let reach = editor.sprayRadius + 2
+        doc.willTouch(CGRect(x: p.x - reach, y: p.y - reach, width: reach * 2, height: reach * 2))
         let dirty = Raster.spray(doc.bitmap, x: px.x, y: px.y,
                                  radius: Int(editor.sprayRadius),
                                  density: Int(editor.sprayDensity),
@@ -656,6 +667,9 @@ final class CanvasView: NSView {
         let grown = CanvasFit.grown(canvas: doc.size, toFit: incoming)
         let didGrow = grown != doc.size
         if didGrow {
+            // The canvas is about to change size, so this step cannot be a patch: swap it
+            // for a snapshot of the picture as it is now, before the growth.
+            doc.promoteCheckpointToWholeCanvas()
             doc.growCanvas(to: grown, fill: editor.secondaryNS)
             applyZoom()
         }
@@ -744,6 +758,13 @@ final class CanvasView: NSView {
         let insetYFromBottom = field.bounds.height - textRect.maxY
         let origin = CGPoint(x: (field.frame.minX + insetX) / zoom,
                              y: (field.frame.minY + insetYFromBottom) / zoom)
+
+        // Generous on purpose: a glyph can overshoot its typographic box, and a rectangle
+        // that is too small here means text that Undo cannot fully remove.
+        let drawn = (string as NSString).size(withAttributes: attributes)
+        let slack = editor.fontSize + 8
+        doc.willTouch(CGRect(x: origin.x, y: origin.y, width: drawn.width, height: drawn.height)
+            .insetBy(dx: -slack, dy: -slack))
 
         let ns = NSGraphicsContext(cgContext: doc.context, flipped: false)
         NSGraphicsContext.saveGraphicsState()
