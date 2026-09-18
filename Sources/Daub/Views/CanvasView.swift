@@ -394,7 +394,14 @@ final class CanvasView: NSView {
             } else if let kind = editor.tool.shapeKind {
                 doc.checkpoint()
                 let reach = editor.strokeWidth + 4
-                doc.willTouch(CGRect.normalised(from: start, to: end).insetBy(dx: -reach, dy: -reach))
+                if kind == .line {
+                    doc.willTouchAlong(from: start, to: end, reach: reach)
+                } else if editor.shapeStyle == .outline {
+                    doc.willTouchOutline(of: CGRect.normalised(from: start, to: end), reach: reach)
+                } else {
+                    doc.willTouch(CGRect.normalised(from: start, to: end)
+                        .insetBy(dx: -reach, dy: -reach))
+                }
                 Shapes.draw(kind, in: doc.context, from: start, to: end,
                             stroke: dragColour.cgColor,
                             fill: shapeFillColour.cgColor,
@@ -510,15 +517,14 @@ final class CanvasView: NSView {
             }
             guard let rgba else { return }
             let size = Int(erasing ? editor.eraserSize : editor.pencilSize)
-            doc.willTouch(CGRect.normalised(from: a, to: b)
-                .insetBy(dx: -CGFloat(size) - 2, dy: -CGFloat(size) - 2))
+            doc.willTouchAlong(from: a, to: b, reach: CGFloat(size) + 2)
             let dirty = Raster.line(doc.bitmap, from: pixel(a), to: pixel(b), size: max(1, size), color: rgba)
             doc.markDirty()
             invalidate(canvasRect: dirty)
 
         default:
             let reach = editor.strokeWidth + 2
-            doc.willTouch(CGRect.normalised(from: a, to: b).insetBy(dx: -reach, dy: -reach))
+            doc.willTouchAlong(from: a, to: b, reach: reach)
             let ctx = doc.context
             ctx.saveGState()
             ctx.setShouldAntialias(editor.antialias)
@@ -759,12 +765,22 @@ final class CanvasView: NSView {
         let origin = CGPoint(x: (field.frame.minX + insetX) / zoom,
                              y: (field.frame.minY + insetYFromBottom) / zoom)
 
-        // Generous on purpose: a glyph can overshoot its typographic box, and a rectangle
-        // that is too small here means text that Undo cannot fully remove.
-        let drawn = (string as NSString).size(withAttributes: attributes)
+        // What the glyphs actually cover, not what the line box says: stacked combining
+        // marks, emoji and swash fallbacks all paint outside the typographic box, and a
+        // rectangle that is too small here is text that Undo cannot fully remove.
+        // `.usesDeviceMetrics` asks for the union of the glyph *image* bounds.
+        let attributed = NSAttributedString(string: string, attributes: attributes)
+        let box = (string as NSString).size(withAttributes: attributes)
+        let unbounded = CGSize(width: CGFloat.greatestFiniteMagnitude,
+                               height: CGFloat.greatestFiniteMagnitude)
+        let ink = attributed.boundingRect(with: unbounded,
+                                          options: [.usesDeviceMetrics, .usesLineFragmentOrigin])
+        let covered = CGRect(x: origin.x + min(0, ink.minX),
+                             y: origin.y + min(0, ink.minY),
+                             width: max(box.width, ink.maxX),
+                             height: max(box.height, ink.maxY))
         let slack = editor.fontSize + 8
-        doc.willTouch(CGRect(x: origin.x, y: origin.y, width: drawn.width, height: drawn.height)
-            .insetBy(dx: -slack, dy: -slack))
+        doc.willTouch(covered.insetBy(dx: -slack, dy: -slack))
 
         let ns = NSGraphicsContext(cgContext: doc.context, flipped: false)
         NSGraphicsContext.saveGraphicsState()

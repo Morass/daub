@@ -251,6 +251,55 @@ final class UndoHistoryTests: XCTestCase {
         XCTAssertTrue(h.canRedo, "the step just undone must still be redoable")
     }
 
+    /// A patch is empty when it is recorded and fills as the tool draws, so the budget
+    /// check at record time sees none of its weight. The step ends; the budget must bite.
+    func testTheBudgetIsEnforcedOnceAStepHasFinishedGrowing() {
+        let b = Bitmap(width: 512, height: 512, fill: white())     // 1 MB
+        let h = UndoHistory(byteBudget: 1 << 20)
+        for _ in 0..<3 {
+            let patch = PixelPatch(canvas: b)
+            h.record(.patch(patch))
+            patch.captureAll(b)                                    // the whole canvas
+            b.invertColours()
+        }
+        XCTAssertGreaterThan(h.byteCount, h.byteBudget, "nothing has trimmed yet")
+        h.enforceBudget()
+        XCTAssertLessThanOrEqual(h.byteCount, h.byteBudget, "finishing a step brings it back")
+        XCTAssertTrue(h.canUndo)
+    }
+
+    /// Promoting a step to a whole-canvas one can push the history over budget. What that
+    /// evicts belongs to the same rollback as the step itself.
+    func testCancellingAPromotedStepPutsBackWhatPromotingItCost() {
+        let b = Bitmap(width: 512, height: 512, fill: white())     // 1 MB
+        let h = UndoHistory(byteBudget: 1 << 20)
+        let first = PixelPatch(canvas: b)
+        h.record(.patch(first))
+        first.capture(b, rect: CGRect(x: 0, y: 0, width: 4, height: 4))
+        b.setPixel(x: 1, y: 1, to: RGBA(r: 0, g: 0, b: 0))
+        let before = h.depth
+        h.record(.patch(PixelPatch(canvas: b)))                    // the paste's checkpoint
+        h.replaceNewestStep(with: .whole(b.snapshot()))            // …which grows the canvas
+        h.discardLastCheckpoint()
+        XCTAssertEqual(h.depth, before, "cancelling a promoted step must restore the history")
+        XCTAssertTrue(h.canUndo)
+    }
+
+    /// Escape on a paste is not an undo: it puts the pixels back and the step never happened,
+    /// so whatever was redoable before is redoable still.
+    func testCancellingAStepKeepsTheRedoBranchThatWasAlreadyThere() {
+        let h = UndoHistory()
+        h.record(step(1))
+        _ = h.undo(applying: passThrough)
+        XCTAssertTrue(h.canRedo, "there is a redo branch to protect")
+        h.record(step(2))                       // the paste's checkpoint
+        var applied = false
+        XCTAssertTrue(h.cancelLastCheckpoint(applying: { _ in applied = true; return true }))
+        XCTAssertTrue(applied, "cancelling has to put the pixels back")
+        XCTAssertTrue(h.canRedo, "and must not leave the redo branch destroyed")
+        XCTAssertFalse(h.canUndo, "the cancelled step is gone, not undone")
+    }
+
     /// A step that changes the canvas size is stored whole; the newest such snapshot is
     /// what a new one shares its unchanged tiles with.
     func testWholeStepsStillShareTheirTiles() {
@@ -328,6 +377,22 @@ final class PixelPatchTests: XCTestCase {
         patch.capture(b, rect: b.bounds)
         let resized = Bitmap(width: 128, height: 64, fill: white())
         XCTAssertFalse(patch.apply(to: resized), "a patch is only valid for its own geometry")
+    }
+
+    /// One black pixel on a white canvas used to cost the whole canvas: the colour swap
+    /// declared its whole search area up front. It now journals the rows that move.
+    func testAColourSwapCostsTheRowsItChanges() {
+        let b = Bitmap(width: 1024, height: 1024, fill: white())     // 4 MB
+        b.setPixel(x: 500, y: 500, to: black)
+        let patch = PixelPatch(canvas: b)
+        let changed = b.replaceColour(matching: black, with: RGBA(r: 255, g: 0, b: 0),
+                                      tolerance: 0, in: nil,
+                                      willTouch: { patch.capture(b, rect: $0) })
+        XCTAssertEqual(changed, 1)
+        XCTAssertEqual(patch.tileCount, 1, "one pixel, one tile")
+        XCTAssertEqual(b.pixel(x: 500, y: 500), RGBA(r: 255, g: 0, b: 0))
+        patch.apply(to: b)
+        XCTAssertEqual(b.pixel(x: 500, y: 500), black, "and it undoes exactly")
     }
 
     func testCaptureClipsToTheCanvas() {

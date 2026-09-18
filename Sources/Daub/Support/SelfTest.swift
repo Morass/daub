@@ -178,18 +178,24 @@ enum SelfTest {
         check(PaintDocument.takeVerificationFailures().isEmpty,
               "undo puts back every pixel the clone stamp covered", "see above")
 
-        // Text: the field is a real subview, so fill it in and commit it.
-        reset(editor, width: 400, height: 300)
-        editor.tool = .text
-        click(canvas, at: CGPoint(x: 40, y: 150))
-        if let field = canvas.subviews.compactMap({ $0 as? NSTextField }).first {
-            field.stringValue = "Daub"
+        // Text: the field is a real subview, so fill it in and commit it. The second string
+        // is a tower of combining marks, which paints far outside its own line box — the
+        // case that proves the capture follows the glyphs and not the typographic metrics.
+        for (name, string) in [("text", "Daub"),
+                               ("text that paints outside its line box",
+                                "x" + String(repeating: "\u{030D}", count: 30))] {
+            reset(editor, width: 400, height: 300)
+            editor.tool = .text
+            click(canvas, at: CGPoint(x: 60, y: 120))
+            guard let field = canvas.subviews.compactMap({ $0 as? NSTextField }).first else {
+                check(false, "the text tool opens a field to type in", "no field appeared")
+                continue
+            }
+            field.stringValue = string
             canvas.commitText()
             editor.undo()
             check(PaintDocument.takeVerificationFailures().isEmpty,
-                  "undo puts back every pixel the text covered", "see above")
-        } else {
-            check(false, "the text tool opens a field to type in", "no field appeared")
+                  "undo puts back every pixel the \(name) covered", "see above")
         }
 
         // Whole-picture operations, including the ones that change the canvas size.
@@ -224,6 +230,29 @@ enum SelfTest {
         check(doc3.history.byteCount < canvasBytes / 4,
               "a history of strokes costs a fraction of one canvas",
               "\(doc3.history.byteCount / 1024) KB against a canvas of \(canvasBytes / 1_048_576) MB")
+
+        // 14. A hairline from corner to corner has the bounding box of the whole picture
+        // and covers a thousandth of it. The step must cost what it covers.
+        reset(editor, width: 2000, height: 1500)
+        let doc4 = editor.document
+        editor.tool = .line
+        drag(canvas, from: CGPoint(x: 10, y: 10), to: CGPoint(x: 1990, y: 1490))
+        check(doc4.history.byteCount < doc4.width * doc4.height * Bitmap.bytesPerPixel / 5,
+              "a diagonal line costs the pixels along it, not its bounding box",
+              "\(doc4.history.byteCount / 1024) KB")
+        editor.undo()
+        let corner = doc4.bitmap.pixel(x: 1000, y: 750)
+        check(corner.r > 200 && corner.g > 200 && corner.b > 200,
+              "and undoing it still clears the whole line", "middle pixel \(corner)")
+
+        // 15. One black pixel swapped on a white canvas costs one tile, not the canvas.
+        reset(editor, width: 2000, height: 1500)
+        let doc5 = editor.document
+        doc5.bitmap.setPixel(x: 900, y: 700, to: RGBA(r: 0, g: 0, b: 0))
+        doc5.replaceColour(.black, with: .systemPink, tolerance: 0)
+        check(doc5.history.byteCount <= 4 * Bitmap.snapshotTileSize * Bitmap.snapshotTileSize * 4,
+              "swapping one pixel's colour costs one tile",
+              "\(doc5.history.byteCount / 1024) KB")
 
         FileHandle.standardError.write(Data("selftest: \(failures == 0 ? "all checks passed" : "\(failures) failed")\n".utf8))
         exit(failures == 0 ? 0 : 1)

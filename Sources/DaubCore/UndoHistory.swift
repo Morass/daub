@@ -68,6 +68,12 @@ public final class UndoHistory {
                 total += tile.byteCount
             }
         }
+        // The steps held aside for a rollback are still in memory, so they still count.
+        for step in (lastRecordUndid.map { $0.evicted + $0.clearedFuture } ?? []) {
+            for tile in step.tiles where seen.insert(ObjectIdentifier(tile)).inserted {
+                total += tile.byteCount
+            }
+        }
         return total
     }
 
@@ -90,8 +96,18 @@ public final class UndoHistory {
     public func replaceNewestStep(with step: UndoStep) {
         guard !past.isEmpty else { return }
         past[past.count - 1] = step
-        _ = trim()
+        // The swap can push the history over budget, and what that evicts belongs to the
+        // same rollback as the step itself: cancelling it must put those steps back too.
+        let evicted = trim()
+        if !evicted.isEmpty, let undone = lastRecordUndid {
+            lastRecordUndid = (undone.evicted + evicted, undone.clearedFuture)
+        }
     }
+
+    /// Bring the history back inside its budget now that the step just recorded has
+    /// finished growing. A patch is empty when it is recorded and fills as the tool draws,
+    /// so the check at record time sees none of its weight.
+    public func enforceBudget() { _ = trim() }
 
     /// - Parameter apply: put the step's pixels on the canvas and hand back the step that
     ///   reverses it — a patch is its own inverse; a whole-canvas snapshot needs the canvas
@@ -120,12 +136,29 @@ public final class UndoHistory {
     @discardableResult
     public func discardLastCheckpoint() -> Bool {
         guard past.popLast() != nil else { return false }
-        if let undone = lastRecordUndid {
-            past.insert(contentsOf: undone.evicted, at: 0)
-            future = undone.clearedFuture
-            lastRecordUndid = nil
-        }
+        rollBackTheLastRecording()
         return true
+    }
+
+    /// Cancel the step just recorded *and* put its pixels back — Escape on a paste, or on a
+    /// selection that was moved. Unlike an undo this leaves no redo entry and does not touch
+    /// the redo branch that was already there: the step never happened.
+    ///
+    /// - Parameter apply: put the step's pixels back on the canvas; false leaves everything
+    ///   alone.
+    @discardableResult
+    public func cancelLastCheckpoint(applying apply: (UndoStep) -> Bool) -> Bool {
+        guard let step = past.last, apply(step) else { return false }
+        past.removeLast()
+        rollBackTheLastRecording()
+        return true
+    }
+
+    private func rollBackTheLastRecording() {
+        guard let undone = lastRecordUndid else { return }
+        past.insert(contentsOf: undone.evicted, at: 0)
+        future = undone.clearedFuture
+        lastRecordUndid = nil
     }
 
     public func clear() { past.removeAll(); future.removeAll(); lastRecordUndid = nil }
@@ -156,6 +189,11 @@ public final class UndoHistory {
                 evicted.append(past.removeFirst())
             } else if canDropFuture {
                 future.removeFirst()
+            } else if lastRecordUndid != nil {
+                // Last resort: let go of the steps held aside in case the newest checkpoint
+                // is cancelled. Cancelling then still puts the pixels back; what it can no
+                // longer do is resurrect the steps that recording it evicted.
+                lastRecordUndid = nil
             } else {
                 break
             }

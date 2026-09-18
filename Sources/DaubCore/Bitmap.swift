@@ -245,18 +245,39 @@ public extension Bitmap {
     ///
     /// - Parameter region: restrict the work to these drawing-space pixels — the selection,
     ///   when there is one. `nil` means the whole canvas.
+    /// - Parameter willTouch: called with the span of each row that is about to change,
+    ///   before it changes, so an undo step records only the rows that really move. One
+    ///   black pixel on a white canvas would otherwise cost the whole picture.
     /// - Returns: how many pixels changed.
     @discardableResult
     func replaceColour(matching target: RGBA, with replacement: RGBA, tolerance: Int,
-                       in region: CGRect? = nil) -> Int {
+                       in region: CGRect? = nil,
+                       willTouch: ((CGRect) -> Void)? = nil) -> Int {
         let area = (region.map { $0.integral.intersection(bounds) } ?? bounds)
         guard area.width >= 1, area.height >= 1 else { return 0 }
         let wanted = target.unpremultiplied
         let fillsEmpty = wanted.a == 0
         var changed = 0
-        withPixelBuffer { buffer in
-            for y in Int(area.minY)..<Int(area.maxY) {
-                for x in Int(area.minX)..<Int(area.maxX) {
+        let columns = Int(area.minX)..<Int(area.maxX)
+        for y in Int(area.minY)..<Int(area.maxY) {
+            // Two passes over the row: find what will change, journal that span, then write
+            // it. The journal has to happen before the pixels move, and a row that changes
+            // nothing must cost nothing.
+            var first = -1, last = -1
+            withPixelBuffer { buffer in
+                for x in columns {
+                    let pixel = buffer.get(x, y)
+                    guard pixel.colourMatches(wanted, tolerance: tolerance) else { continue }
+                    let out = fillsEmpty ? replacement : pixel.recoloured(to: replacement)
+                    guard out != pixel else { continue }
+                    if first < 0 { first = x }
+                    last = x
+                }
+            }
+            guard first >= 0 else { continue }
+            willTouch?(CGRect(x: first, y: y, width: last - first + 1, height: 1))
+            withPixelBuffer { buffer in
+                for x in first...last {
                     let pixel = buffer.get(x, y)
                     guard pixel.colourMatches(wanted, tolerance: tolerance) else { continue }
                     // Replacing "nothing" is painting: the matched pixels have no coverage

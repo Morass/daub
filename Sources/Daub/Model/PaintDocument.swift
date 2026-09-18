@@ -90,6 +90,32 @@ final class PaintDocument {
     /// across the whole picture.
     func willTouchEverything() { openPatch?.captureAll(bitmap) }
 
+    /// The area a *line* covers, which is not its bounding box: a hairline from one corner
+    /// of a 24-megapixel picture to the other has a bounding box of the whole picture and
+    /// covers a thousandth of it. Walk it instead.
+    func willTouchAlong(from a: CGPoint, to b: CGPoint, reach: CGFloat) {
+        guard openPatch != nil else { return }
+        let span = max(1, reach)
+        let steps = max(1, Int(hypot(b.x - a.x, b.y - a.y) / span))
+        for step in 0...steps {
+            let t = CGFloat(step) / CGFloat(steps)
+            let p = CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
+            willTouch(CGRect(x: p.x - span, y: p.y - span, width: span * 2, height: span * 2))
+        }
+    }
+
+    /// The four edges of a rectangle, for an outline that is not filled — the same argument
+    /// as `willTouchAlong`, in two dimensions.
+    func willTouchOutline(of rect: CGRect, reach: CGFloat) {
+        let r = rect.insetBy(dx: -reach, dy: -reach)
+        let band = max(1, reach * 2) + min(r.width, r.height) * 0
+        let thickness = min(band, min(r.width, r.height))
+        willTouch(CGRect(x: r.minX, y: r.minY, width: r.width, height: thickness))
+        willTouch(CGRect(x: r.minX, y: r.maxY - thickness, width: r.width, height: thickness))
+        willTouch(CGRect(x: r.minX, y: r.minY, width: thickness, height: r.height))
+        willTouch(CGRect(x: r.maxX - thickness, y: r.minY, width: thickness, height: r.height))
+    }
+
     /// The step being journalled, if any.
     private(set) var openPatch: PixelPatch?
 
@@ -202,10 +228,10 @@ final class PaintDocument {
     func makeColourTransparent(_ colour: NSColor, tolerance: Int, in region: CGRect? = nil) -> Int {
         guard let target = RGBA(colour.cgColor) else { return 0 }
         checkpoint()
-        willTouch(region ?? bounds)
         let changed = bitmap.replaceColour(matching: target,
                                            with: RGBA(r: 0, g: 0, b: 0, a: 0),
-                                           tolerance: tolerance, in: region)
+                                           tolerance: tolerance, in: region,
+                                           willTouch: { [weak self] span in self?.willTouch(span) })
         if changed > 0 { hasAlpha = true } else { cancelCheckpoint() }
         return changed
     }
@@ -217,9 +243,9 @@ final class PaintDocument {
                        in region: CGRect? = nil) -> Int {
         guard let target = RGBA(colour.cgColor), let new = RGBA(replacement.cgColor) else { return 0 }
         checkpoint()
-        willTouch(region ?? bounds)
         let changed = bitmap.replaceColour(matching: target, with: new,
-                                           tolerance: tolerance, in: region)
+                                           tolerance: tolerance, in: region,
+                                           willTouch: { [weak self] span in self?.willTouch(span) })
         if changed == 0 { cancelCheckpoint() }
         return changed
     }
@@ -269,10 +295,20 @@ final class PaintDocument {
     /// it was before it. Cancelling a paste with Escape must leave a saved file saved —
     /// plain `undo()` marks every restored snapshot edited.
     func undoCancellingCheckpoint() {
-        let wasDirty = wasDirtyBeforeCheckpoint
-        _ = undo()
-        isDirty = wasDirty
+        openPatch = nil
+        if PaintDocument.verifiesUndo { _ = verificationStack.popLast() }
+        history.cancelLastCheckpoint { step in
+            switch step {
+            case .patch(let patch): return patch.apply(to: bitmap)
+            case .whole(let snapshot): adopt(snapshot); return true
+            }
+        }
+        isDirty = wasDirtyBeforeCheckpoint
     }
+
+    /// The operation is over: the step it recorded has stopped growing, so the history can
+    /// be brought back inside its memory budget.
+    func finishStep() { history.enforceBudget() }
 
     /// Drop the checkpoint an action recorded before discovering it changed nothing, and
     /// with it the dirty flag that checkpoint raised.

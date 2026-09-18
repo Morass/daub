@@ -57,6 +57,9 @@ final class Editor: ObservableObject {
     /// Refresh the chrome after a committed change. Strokes call this on mouse-up only.
     func didCommit() {
         isDirty = document.isDirty
+        // The step is finished, so its patch has stopped growing and the history can be
+        // measured honestly again.
+        document.finishStep()
         revision &+= 1
     }
 
