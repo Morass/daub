@@ -100,13 +100,19 @@ public final class Bitmap {
     /// has not finished with still points at it.
     public var liveImage: CGImage? {
         let byteCount = bytesPerRow * height
+        // The retain is taken before the call, so the failure path has to give it back:
+        // no provider means `releaseData` will never run.
+        let retained = Unmanaged.passRetained(self)
         guard let provider = CGDataProvider(
-            dataInfo: Unmanaged.passRetained(self).toOpaque(),
+            dataInfo: retained.toOpaque(),
             data: storage, size: byteCount,
             releaseData: { info, _, _ in
                 if let info { Unmanaged<Bitmap>.fromOpaque(info).release() }
             })
-        else { return nil }
+        else {
+            retained.release()
+            return nil
+        }
         let image = CGImage(width: width, height: height,
                             bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: bytesPerRow,
                             space: CGColorSpace(name: CGColorSpace.sRGB)!,
