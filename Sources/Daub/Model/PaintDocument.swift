@@ -31,12 +31,15 @@ final class PaintDocument {
         hasAlpha = transparent
     }
 
+    /// Draw onto a *clear* bitmap, not a white one. Filling white first and compositing
+    /// over it destroyed the transparency of every PNG and window screenshot on the way in
+    /// — and then asked the flattened result whether it had any, which it never did. A
+    /// picture with no alpha comes out opaque either way.
     init(image: CGImage, url: URL?) throws {
-        bitmap = try Bitmap.checked(width: image.width, height: image.height, fill: NSColor.white.cgColor)
+        bitmap = try Bitmap.checked(width: image.width, height: image.height)
         bitmap.context.draw(image, in: bitmap.bounds)
         fileURL = url
-        hasAlpha = image.alphaInfo != .none && image.alphaInfo != .noneSkipLast
-            && image.alphaInfo != .noneSkipFirst && bitmap.hasTransparency()
+        hasAlpha = bitmap.hasTransparency()
     }
 
     /// Mark the pixels changed without opening an undo step. Painting inside one drag
@@ -181,6 +184,15 @@ final class PaintDocument {
 
     func image(in rect: CGRect) -> CGImage? {
         bitmap.croppedImage(in: rect)
+    }
+
+    /// Undo the step a cancelled action checkpointed *and* put the dirty flag back to what
+    /// it was before it. Cancelling a paste with Escape must leave a saved file saved —
+    /// plain `undo()` marks every restored snapshot edited.
+    func undoCancellingCheckpoint() {
+        let wasDirty = wasDirtyBeforeCheckpoint
+        _ = undo()
+        isDirty = wasDirty
     }
 
     /// Drop the checkpoint an action recorded before discovering it changed nothing, and

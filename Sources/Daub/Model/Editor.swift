@@ -104,6 +104,10 @@ final class Editor: ObservableObject {
     /// This is deliberately not the same as ⌘V. A paste lands *in* the picture you are
     /// working on; this one replaces it, so it asks about unsaved work exactly like Open.
     func newFromClipboard(from pasteboard: NSPasteboard = .general) {
+        // Text still in its field, and a stroke still under the mouse, are work the
+        // unsaved-work prompt below cannot see until they are in the picture.
+        canvas?.endActiveDrag()
+        canvas?.commitText()
         guard let image = ImageFile.readFromPasteboard(pasteboard) else {
             noImageOnClipboard()
             return

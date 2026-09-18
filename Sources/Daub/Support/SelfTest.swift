@@ -39,6 +39,8 @@ enum SelfTest {
         check(editor.zoom < 1, "a picture larger than the window is zoomed to fit",
               "zoom \(editor.zoom)")
         check(editor.isDirty, "imported pixels count as unsaved work", "not dirty")
+        check(!editor.document.hasAlpha,
+              "a picture with no transparency comes in opaque", "hasAlpha true")
 
         // 2. Pasting into a smaller canvas grows the canvas instead of clipping.
         reset(editor, width: 1024, height: 768)
@@ -92,7 +94,27 @@ enum SelfTest {
         check(editor.canvasSize == CGSize(width: 1400, height: 900),
               "and redo brings that floating paste back", "got \(editor.canvasSize)")
 
-        // 7. A small paste leaves the canvas alone.
+        // 7. Cancelling a paste leaves a saved picture saved.
+        reset(editor, width: 1024, height: 768)
+        put(image(width: 2000, height: 1500, colour: .systemRed))
+        canvas.pasteFromClipboard(from: board)
+        canvas.keyDown(with: escapeKey())
+        check(!editor.isDirty && !editor.document.isDirty,
+              "a cancelled paste does not leave the picture marked edited",
+              "still dirty")
+
+        // 8. Transparency survives the trip through the clipboard.
+        put(halfTransparentImage())
+        editor.document.isDirty = false
+        editor.isDirty = false
+        editor.newFromClipboard(from: board)
+        check(editor.document.hasAlpha,
+              "an imported picture keeps its transparency", "hasAlpha false")
+        let clear = editor.document.bitmap.pixel(x: 1, y: 1)
+        check(clear.a == 0, "transparent pixels are still transparent, not white",
+              "corner pixel \(clear)")
+
+        // 9. A small paste leaves the canvas alone.
         reset(editor, width: 1024, height: 768)
         put(image(width: 200, height: 100, colour: .systemGreen))
         canvas.pasteFromClipboard(from: board)
@@ -118,6 +140,14 @@ enum SelfTest {
 
     private static func image(width: Int, height: Int, colour: NSColor) -> CGImage {
         let bitmap = Bitmap(width: width, height: height, fill: colour.cgColor)
+        return bitmap.makeImage()!
+    }
+
+    /// Left half solid, right half empty — the shape of a window screenshot's corners.
+    private static func halfTransparentImage() -> CGImage {
+        let bitmap = Bitmap(width: 40, height: 40)
+        bitmap.context.setFillColor(NSColor.systemRed.cgColor)
+        bitmap.context.fill(CGRect(x: 20, y: 0, width: 20, height: 40))
         return bitmap.makeImage()!
     }
 

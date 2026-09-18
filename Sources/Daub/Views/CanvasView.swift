@@ -566,7 +566,7 @@ final class CanvasView: NSView {
         if !floatingChangedPixels {
             doc.cancelCheckpoint()
         } else if restoringPixels {
-            doc.undo()
+            doc.undoCancellingCheckpoint()
             // The undo may have put back a smaller canvas (a paste that grew it), so the
             // view has to be resized to match before it draws.
             applyZoom()

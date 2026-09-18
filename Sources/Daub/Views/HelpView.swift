@@ -188,7 +188,9 @@ struct HelpView: View {
                """),
         Recipe(title: "Save a PNG with a transparent background",
                body: """
-               Either start from File ▸ New with Transparent Background (⇧⌘N), or knock the \
+               A picture that already has transparency keeps it, opened or pasted in with \
+               ⇧⌘V — a window screenshot (⌃⇧⌘4 then Space) brings its see-through corners \
+               with it. Otherwise start from File ▸ New with Transparent Background (⇧⌘N), or knock the \
                background out of a picture you already have: right-click the background with \
                the eyedropper so it lands in the background swatch, then Image ▸ Make \
                Background Colour Transparent. Raise Tolerance first if the edges are soft or \

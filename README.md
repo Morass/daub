@@ -149,7 +149,11 @@ picture on the clipboard, ⇧⌘V says so rather than doing nothing.
 
 ## Transparency, and saving a PNG with a transparent background
 
-The canvas is opaque by default, exactly like Paint. Two ways to get alpha:
+The canvas is opaque by default, exactly like Paint. Three ways to get alpha:
+
+**Open or import one that already has it.** A PNG with transparency — or a window
+screenshot (⌃⇧⌘4 then Space, which has see-through corners) — keeps it, whether you open
+the file or bring it in with ⇧⌘V. The checkerboard tells you it is there.
 
 **Start transparent.** ⇧⌘N — *File → New with Transparent Background*. The canvas shows a
 checkerboard, the eraser rubs through to nothing, and ⌘S to `.png` keeps the holes.
