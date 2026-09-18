@@ -51,7 +51,7 @@ final class PaintDocument {
 
     /// Call once immediately before a mutation that should be undoable as a single step.
     func checkpoint() {
-        history.record(bitmap.makeImage())
+        history.record(bitmap.snapshot(reusing: history.newestPast))
         wasDirtyBeforeCheckpoint = isDirty
         isDirty = true
     }
@@ -62,24 +62,28 @@ final class PaintDocument {
 
     @discardableResult
     func undo() -> Bool {
-        guard let previous = history.undo(current: bitmap.makeImage()) else { return false }
+        let current = bitmap.snapshot(reusing: history.newestPast)
+        guard let previous = history.undo(current: current) else { return false }
         adopt(previous)
         return true
     }
 
     @discardableResult
     func redo() -> Bool {
-        guard let next = history.redo(current: bitmap.makeImage()) else { return false }
+        let current = bitmap.snapshot(reusing: history.newestFuture)
+        guard let next = history.redo(current: current) else { return false }
         adopt(next)
         return true
     }
 
-    /// Restoring a snapshot may also restore a different canvas size (undoing a resize).
-    private func adopt(_ image: CGImage) {
-        if image.width != bitmap.width || image.height != bitmap.height {
-            bitmap = Bitmap(width: image.width, height: image.height, fill: NSColor.white.cgColor)
+    /// Restoring a snapshot may also restore a different canvas size (undoing a resize), in
+    /// which case the bitmap is rebuilt at that size first — the snapshot then overwrites
+    /// every pixel of it, so what it is filled with does not matter.
+    private func adopt(_ snapshot: CanvasSnapshot) {
+        if snapshot.width != bitmap.width || snapshot.height != bitmap.height {
+            bitmap = Bitmap(width: snapshot.width, height: snapshot.height)
         }
-        bitmap.replace(with: image)
+        bitmap.restore(snapshot)
         isDirty = true
     }
 

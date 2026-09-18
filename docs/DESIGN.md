@@ -41,9 +41,19 @@ mouse-move doesn't re-render the window. The screen draw reads *through* the bit
 buffer (`liveImage`) and blits only the dirty region, rather than copying the canvas each
 frame.
 
-**Snapshot undo.** 32 full-canvas snapshots, taken before each mutation. Crude, but it
-survives every tool without per-tool inverse logic. The cap is a step count, not a byte
-budget — 32 steps of a 4096² canvas is about 2 GB.
+**Snapshot undo, over shared tiles.** A snapshot before each mutation still — it is the
+only model that survives every tool without per-tool inverse logic — but a snapshot is a
+grid of 128×128 tiles (`CanvasSnapshot`), and taking one reuses, by reference, every tile
+whose bytes are unchanged (`memcmp` per tile row against live memory, no allocation for a
+tile that matches). A stroke therefore costs the tiles it crossed, not the canvas: 33
+steps on 6000×4000 is **92 MB where full images cost 3.0 GB**. Capture is ~8.7 ms on that
+canvas, once per stroke at mouse-down, against ~0.3 ms for a 1024×768 one.
+
+Two ceilings: 32 steps and a 512 MB budget of distinct tile bytes. Whole-canvas steps
+(invert, a full-canvas paste) genuinely cost a canvas each, and the budget is what stops
+thirty-two of those from filling memory — it drops the step furthest from the present,
+from whichever of the undo/redo stacks is longer, and always keeps one. Measured: 40
+inverts of 6000×4000 settle at 458 MB / 5 steps instead of 3.7 GB.
 
 ## External review, first two commits
 

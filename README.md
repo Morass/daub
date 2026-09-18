@@ -53,7 +53,9 @@ right-click → *Set as Background*) for the background. The two overlapping wel
 left open the full colour picker. `X` swaps them.
 
 **Undo is 32 steps deep** (⌘Z / ⇧⌘Z) and covers everything — strokes, shapes, text, fills,
-rotations, canvas resizes.
+rotations, canvas resizes. On a very large picture, steps that change *every* pixel at once
+(invert, a full-canvas paste) are the one exception: Daub keeps the most recent of those it
+can hold in memory rather than all 32.
 
 **Paste a screenshot.** ⌃⇧⌘4 to grab part of the screen, then ⇧⌘V in Daub: the picture
 *becomes* the screenshot, at its own size, shrunk to fit the window if it is bigger. Plain

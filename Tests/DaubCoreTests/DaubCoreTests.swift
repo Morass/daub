@@ -128,36 +128,132 @@ final class ShapesTests: XCTestCase {
 }
 
 final class UndoHistoryTests: XCTestCase {
-    private func image(_ value: UInt8) -> CGImage {
-        let b = Bitmap(width: 2, height: 2,
-                       fill: CGColor(srgbRed: CGFloat(value) / 255, green: 0, blue: 0, alpha: 1))
-        return b.makeImage()!
+    private func canvas(_ value: UInt8) -> Bitmap {
+        Bitmap(width: 2, height: 2,
+               fill: CGColor(srgbRed: CGFloat(value) / 255, green: 0, blue: 0, alpha: 1))
     }
+
+    private func snapshot(_ value: UInt8) -> CanvasSnapshot { canvas(value).snapshot() }
 
     func testUndoRedoRoundTrip() {
         let h = UndoHistory(limit: 4)
         XCTAssertFalse(h.canUndo)
-        h.record(image(10))
+        h.record(snapshot(10))
         XCTAssertTrue(h.canUndo)
-        let restored = h.undo(current: image(20))
+        let restored = h.undo(current: snapshot(20))
         XCTAssertNotNil(restored)
         XCTAssertTrue(h.canRedo)
-        XCTAssertNotNil(h.redo(current: image(10)))
+        XCTAssertNotNil(h.redo(current: snapshot(10)))
     }
 
     func testRecordingDropsTheRedoBranch() {
         let h = UndoHistory()
-        h.record(image(1))
-        _ = h.undo(current: image(2))
+        h.record(snapshot(1))
+        _ = h.undo(current: snapshot(2))
         XCTAssertTrue(h.canRedo)
-        h.record(image(3))
+        h.record(snapshot(3))
         XCTAssertFalse(h.canRedo, "a new edit after undo abandons the redo branch")
     }
 
     func testHonoursItsLimit() {
         let h = UndoHistory(limit: 3)
-        for i in 0..<10 { h.record(image(UInt8(i))) }
+        for i in 0..<10 { h.record(snapshot(UInt8(i))) }
         XCTAssertEqual(h.depth, 3)
+    }
+
+    /// The point of the tiles: a stroke over a corner of a big canvas must not cost a copy
+    /// of the whole canvas. Before this, 32 steps of a 6000x4000 picture was 3 GB.
+    func testAStrokeCostsItsTilesAndNotTheCanvas() {
+        let b = Bitmap(width: 1024, height: 1024, fill: white())
+        let h = UndoHistory()
+        let full = b.snapshot().byteCount
+        XCTAssertEqual(full, 1024 * 1024 * 4)
+        h.record(b.snapshot(reusing: h.newestPast))
+        for step in 0..<32 {
+            b.setPixel(x: step, y: 0, to: RGBA(r: 0, g: 0, b: 0))
+            h.record(b.snapshot(reusing: h.newestPast))
+        }
+        XCTAssertEqual(h.depth, 32)
+        // One baseline canvas plus one 64 KB tile per step. The whole-image history this
+        // replaced held 33 canvases — 138 MB for the same thirty-three strokes.
+        let tile = Bitmap.snapshotTileSize * Bitmap.snapshotTileSize * Bitmap.bytesPerPixel
+        XCTAssertLessThan(h.byteCount, full + 33 * tile)
+        XCTAssertLessThan(h.byteCount, 33 * full / 20)
+    }
+
+    /// The other half: whole-canvas steps really do cost a canvas each, so the budget has
+    /// to drop the oldest of them rather than let the history grow without end.
+    func testTheByteBudgetDropsTheOldestSteps() {
+        let b = Bitmap(width: 256, height: 256, fill: white())
+        let canvasBytes = 256 * 256 * 4
+        let h = UndoHistory(limit: 32, byteBudget: 4 * canvasBytes)
+        for step in 0..<10 {
+            b.invertColours()      // every pixel differs, so no tile can be shared
+            b.setPixel(x: 0, y: 0, to: RGBA(r: UInt8(step), g: 0, b: 0))
+            h.record(b.snapshot(reusing: h.newestPast))
+        }
+        XCTAssertLessThan(h.depth, 10, "the budget must have dropped the oldest steps")
+        XCTAssertLessThanOrEqual(h.byteCount, 4 * canvasBytes)
+        XCTAssertTrue(h.canUndo, "the budget must never take the last step away")
+    }
+
+    func testOneStepSurvivesEvenWhenItIsOverBudget() {
+        let b = Bitmap(width: 256, height: 256, fill: white())
+        let h = UndoHistory(byteBudget: 1 << 20)   // clamped to 1 MB; the canvas is 256 KB
+        let big = Bitmap(width: 1024, height: 1024, fill: white())
+        h.record(big.snapshot())
+        XCTAssertTrue(h.canUndo)
+        XCTAssertEqual(h.depth, 1)
+        _ = b   // the small canvas is only here to keep the comparison honest
+    }
+
+    private func white() -> CGColor { CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1) }
+}
+
+/// The tiles themselves: a snapshot must come back byte for byte, share what did not
+/// change, and survive a canvas that is not a whole number of tiles wide.
+final class CanvasSnapshotTests: XCTestCase {
+    private func white() -> CGColor { CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1) }
+
+    func testRestoreIsExact() {
+        let b = Bitmap(width: 300, height: 173, fill: white())   // deliberately ragged
+        b.setPixel(x: 299, y: 172, to: RGBA(r: 1, g: 2, b: 3))
+        b.setPixel(x: 130, y: 44, to: RGBA(r: 9, g: 8, b: 7))
+        let snap = b.snapshot()
+        b.invertColours()
+        b.setPixel(x: 0, y: 0, to: RGBA(r: 200, g: 100, b: 50))
+        XCTAssertTrue(b.restore(snap))
+        XCTAssertEqual(b.pixel(x: 299, y: 172), RGBA(r: 1, g: 2, b: 3), "the last tile is ragged")
+        XCTAssertEqual(b.pixel(x: 130, y: 44), RGBA(r: 9, g: 8, b: 7))
+        XCTAssertEqual(b.pixel(x: 0, y: 0), RGBA(r: 255, g: 255, b: 255))
+    }
+
+    func testUnchangedTilesAreTheSameObjects() {
+        let b = Bitmap(width: 512, height: 512, fill: white())
+        let first = b.snapshot()
+        b.setPixel(x: 5, y: 5, to: RGBA(r: 0, g: 0, b: 0))
+        let second = b.snapshot(reusing: first)
+        XCTAssertEqual(first.tileCount, 16)
+        XCTAssertEqual(second.sharedTileCount(with: first), 15, "only the touched tile is new")
+    }
+
+    func testASnapshotOfAnotherSizeSharesNothing() {
+        let small = Bitmap(width: 64, height: 64, fill: white())
+        let large = Bitmap(width: 256, height: 256, fill: white())
+        let taken = large.snapshot(reusing: small.snapshot())
+        XCTAssertEqual(taken.width, 256)
+        XCTAssertFalse(small.restore(taken), "a snapshot of another size must be refused")
+    }
+
+    func testSnapshotSurvivesACanvasSmallerThanOneTile() {
+        let b = Bitmap(width: 3, height: 2, fill: white())
+        b.setPixel(x: 2, y: 1, to: RGBA(r: 4, g: 5, b: 6))
+        let snap = b.snapshot()
+        XCTAssertEqual(snap.tileCount, 1)
+        XCTAssertEqual(snap.byteCount, 3 * 2 * 4)
+        b.clearAll()
+        b.restore(snap)
+        XCTAssertEqual(b.pixel(x: 2, y: 1), RGBA(r: 4, g: 5, b: 6))
     }
 }
 
@@ -296,7 +392,7 @@ final class PanelFixTests: XCTestCase {
     func testDiscardedCheckpointLeavesNoUndoStep() {
         let h = UndoHistory()
         let b = Bitmap(width: 4, height: 4, fill: white())
-        h.record(b.makeImage())
+        h.record(b.snapshot())
         XCTAssertTrue(h.canUndo)
         XCTAssertNil(FloodFill.fill(b, x: 0, y: 0, with: RGBA(r: 255, g: 255, b: 255)))
         h.discardLastCheckpoint()

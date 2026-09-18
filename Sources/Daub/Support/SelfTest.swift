@@ -121,6 +121,38 @@ enum SelfTest {
         check(editor.canvasSize == CGSize(width: 1024, height: 768),
               "a paste that already fits does not resize the picture", "got \(editor.canvasSize)")
 
+        // 10. A history of ordinary strokes costs tiles, not canvases.
+        reset(editor, width: 2000, height: 1500)
+        let doc = editor.document
+        let canvasBytes = doc.width * doc.height * Bitmap.bytesPerPixel
+        for step in 0..<32 {
+            doc.checkpoint()
+            doc.fillRegion(CGRect(x: step * 4, y: 0, width: 3, height: 3), with: .systemRed)
+        }
+        check(doc.history.depth == 32, "thirty-two strokes are thirty-two undo steps",
+              "depth \(doc.history.depth)")
+        // Whole-image snapshots would be 33 canvases here: 396 MB.
+        check(doc.history.byteCount < canvasBytes * 2,
+              "a history of small strokes stays near one canvas, not thirty-three",
+              "\(doc.history.byteCount / 1_048_576) MB for a \(canvasBytes / 1_048_576) MB canvas")
+        for _ in 0..<32 { editor.undo() }
+        let unpainted = doc.bitmap.pixel(x: 1, y: doc.height - 2)
+        check(unpainted.r > 200 && unpainted.g > 200 && unpainted.b > 200,
+              "undoing all thirty-two of them puts every pixel back",
+              "corner pixel \(unpainted)")
+
+        // 11. The byte budget drops the oldest step rather than growing without end.
+        reset(editor, width: 1200, height: 900)
+        let budgeted = PaintDocument(width: 1200, height: 900)
+        for _ in 0..<40 {
+            budgeted.checkpoint()
+            budgeted.apply(.invert)          // every pixel differs: no tile can be shared
+        }
+        check(budgeted.history.byteCount <= budgeted.history.byteBudget,
+              "whole-canvas steps stay inside the undo memory budget",
+              "\(budgeted.history.byteCount / 1_048_576) MB over a budget of \(budgeted.history.byteBudget / 1_048_576) MB")
+        check(budgeted.history.canUndo, "and the history keeps at least one step", "no undo left")
+
         FileHandle.standardError.write(Data("selftest: \(failures == 0 ? "all checks passed" : "\(failures) failed")\n".utf8))
         exit(failures == 0 ? 0 : 1)
     }
