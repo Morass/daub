@@ -41,19 +41,30 @@ mouse-move doesn't re-render the window. The screen draw reads *through* the bit
 buffer (`liveImage`) and blits only the dirty region, rather than copying the canvas each
 frame.
 
-**Snapshot undo, over shared tiles.** A snapshot before each mutation still — it is the
-only model that survives every tool without per-tool inverse logic — but a snapshot is a
-grid of 128×128 tiles (`CanvasSnapshot`), and taking one reuses, by reference, every tile
-whose bytes are unchanged (`memcmp` per tile row against live memory, no allocation for a
-tile that matches). A stroke therefore costs the tiles it crossed, not the canvas: 33
-steps on 6000×4000 is **92 MB where full images cost 3.0 GB**. Capture is ~8.7 ms on that
-canvas, once per stroke at mouse-down, against ~0.3 ms for a 1024×768 one.
+**Undo remembers what a step changed.** A step is a `PixelPatch`: opened before the tool
+draws, told by each drawing call the rectangle it is about to touch (the same rectangle that
+call already computes for the screen redraw), and holding the 64×64 tiles under those
+rectangles as they were — copied once, on first touch. It is its own inverse: `apply` swaps
+its bytes with the canvas, so the same object undoes a step and then redoes it. Nothing
+scales with the size of the picture. 33 strokes on 6000×4000 cost **2.97 MB**; whole-canvas
+snapshots cost 92 MB for the same history, and full CGImages cost 3.0 GB. Recording one is
+0.02 ms.
 
-Two ceilings: 32 steps and a 512 MB budget of distinct tile bytes. Whole-canvas steps
-(invert, a full-canvas paste) genuinely cost a canvas each, and the budget is what stops
-thirty-two of those from filling memory — it drops the step furthest from the present,
-from whichever of the undo/redo stacks is longer, and always keeps one. Measured: 40
-inverts of 6000×4000 settle at 458 MB / 5 steps instead of 3.7 GB.
+`CanvasSnapshot` — the tile grid of the whole canvas, sharing by reference every tile a step
+did not change — remains for the steps a patch cannot express: resize, scale, crop, rotate,
+and a paste that grows the canvas (`promoteCheckpointToWholeCanvas` swaps the open patch for
+one). Those cost the old canvas, which is inherent.
+
+Two ceilings on the history: 32 steps and a 512 MB budget of distinct tile bytes. Over
+budget it drops the step furthest from the present, from whichever of the undo/redo stacks
+is longer, and never the nearest step on either side.
+
+**The risk this design carries** is a tool that draws somewhere it did not declare: wrong
+pixels after an undo, with nothing to see at the time. `PaintDocument.verifiesUndo` keeps a
+full snapshot beside every patch and compares them after the undo; the self-test turns it on
+and drives every tool — pencil, brush, eraser, airbrush, the four shapes, gradient, fill,
+clone stamp, text, and the whole-picture operations — through real mouse events. Deleting
+any single `willTouch` call makes those checks fail. Add a tool, add it there.
 
 ## External review, first two commits
 
