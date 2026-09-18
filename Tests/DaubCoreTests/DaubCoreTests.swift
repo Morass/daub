@@ -207,6 +207,43 @@ final class UndoHistoryTests: XCTestCase {
         _ = b   // the small canvas is only here to keep the comparison honest
     }
 
+    /// A click that changes nothing must not cost the user the history they had. The byte
+    /// budget made that worse than a lost step: on a canvas where one snapshot fills the
+    /// budget, recording the doomed checkpoint evicted the only real one, and cancelling it
+    /// left *no* undo at all.
+    func testACancelledCheckpointPutsBackWhatRecordingItCost() {
+        let big = Bitmap(width: 512, height: 512, fill: white())
+        let h = UndoHistory(byteBudget: 1 << 20)      // one 1 MB canvas fills it exactly
+        h.record(big.snapshot())
+        big.invertColours()
+        let before = h.depth
+        h.record(big.snapshot(reusing: h.newestPast))   // the no-op's checkpoint
+        h.discardLastCheckpoint()
+        XCTAssertEqual(h.depth, before, "cancelling must not cost a step that was already there")
+        XCTAssertTrue(h.canUndo)
+    }
+
+    func testACancelledCheckpointPutsBackTheRedoBranch() {
+        let h = UndoHistory()
+        h.record(snapshot(1))
+        _ = h.undo(current: snapshot(2))
+        XCTAssertTrue(h.canRedo)
+        h.record(snapshot(3))            // a click that turns out to change nothing
+        h.discardLastCheckpoint()
+        XCTAssertTrue(h.canRedo, "a cancelled checkpoint must not throw away the redo branch")
+    }
+
+    /// Undo pushes the present onto the redo stack; on a canvas bigger than the budget that
+    /// push used to be trimmed away immediately, so ⇧⌘Z could not undo the ⌘Z.
+    func testUndoKeepsTheRedoItJustCreated() {
+        let big = Bitmap(width: 1024, height: 512, fill: white())   // 2 MB, over the budget
+        let h = UndoHistory(byteBudget: 1 << 20)
+        h.record(big.snapshot())
+        big.invertColours()
+        XCTAssertNotNil(h.undo(current: big.snapshot(reusing: h.newestPast)))
+        XCTAssertTrue(h.canRedo, "the step just undone must still be redoable")
+    }
+
     private func white() -> CGColor { CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1) }
 }
 
@@ -243,6 +280,44 @@ final class CanvasSnapshotTests: XCTestCase {
         let taken = large.snapshot(reusing: small.snapshot())
         XCTAssertEqual(taken.width, 256)
         XCTAssertFalse(small.restore(taken), "a snapshot of another size must be refused")
+    }
+
+    /// `(width + tileSize - 1)` overflows for a tileSize of Int.max. The parameter is
+    /// public, so it has to survive one.
+    func testAnAbsurdTileSizeIsClampedToTheCanvas() {
+        let b = Bitmap(width: 200, height: 40, fill: white())
+        b.setPixel(x: 199, y: 39, to: RGBA(r: 7, g: 7, b: 7))
+        let snap = b.snapshot(tileSize: Int.max)
+        XCTAssertEqual(snap.tileCount, 1)
+        b.clearAll()
+        XCTAssertTrue(b.restore(snap))
+        XCTAssertEqual(b.pixel(x: 199, y: 39), RGBA(r: 7, g: 7, b: 7))
+    }
+
+    /// `Bitmap.init` clamps each side to 32768 and never looks at the area, so the New and
+    /// Resize sheets could ask it for a 4 GB canvas.
+    func testTheAreaLimitCatchesWhatTheSideLimitsDoNot() {
+        XCTAssertTrue(Bitmap.isAllocatable(width: 8192, height: 8192))
+        XCTAssertFalse(Bitmap.isAllocatable(width: 32768, height: 32768),
+                       "inside both side limits, but 4 GB of pixels")
+        XCTAssertFalse(Bitmap.isAllocatable(width: 0, height: 10))
+        XCTAssertFalse(Bitmap.isAllocatable(width: Int.max, height: Int.max))
+    }
+
+    /// A crop or a resize throws the old `Bitmap` away. A frame CoreGraphics is still
+    /// holding must not be left pointing at freed pixels.
+    func testALiveImageKeepsItsBitmapAlive() {
+        weak var weakBitmap: Bitmap?
+        var image: CGImage?
+        do {
+            let b = Bitmap(width: 8, height: 8, fill: white())
+            weakBitmap = b
+            image = b.liveImage
+        }
+        XCTAssertNotNil(image)
+        XCTAssertNotNil(weakBitmap, "the live image must keep the buffer it reads from alive")
+        image = nil
+        XCTAssertNil(weakBitmap, "and let it go when the image does")
     }
 
     func testSnapshotSurvivesACanvasSmallerThanOneTile() {

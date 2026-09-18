@@ -76,6 +76,7 @@ final class Editor: ObservableObject {
     // MARK: - File
 
     func newDocument(width: Int = 1024, height: Int = 768, transparent: Bool = false) {
+        guard canvasIsAllowed(width: width, height: height) else { return }
         guard confirmDiscardIfNeeded() else { return }
         replaceDocument(PaintDocument(width: width, height: height, transparent: transparent))
     }
@@ -291,6 +292,7 @@ final class Editor: ObservableObject {
     }
 
     func resizeCanvas(width: Int, height: Int, scaleContents: Bool) {
+        guard canvasIsAllowed(width: width, height: height) else { return }
         canvas?.commitFloatingSelection()
         if scaleContents {
             document.scaleImage(to: width, height)
@@ -300,6 +302,26 @@ final class Editor: ObservableObject {
         canvas?.documentDidChange()
         didCommit()
     }
+
+    /// `Bitmap` clamps each side but not the area, so the New and Resize sheets — where the
+    /// numbers come from a user typing — are where the pixel limit has to be enforced.
+    /// 32768 x 32768 is inside both side limits and is a 4 GB allocation.
+    func canvasIsAllowed(width: Int, height: Int) -> Bool {
+        if Bitmap.isAllocatable(width: width, height: height) { return true }
+        guard Editor.showsAlerts else { return false }
+        let alert = NSAlert()
+        alert.messageText = "That picture would be too big."
+        alert.informativeText = "Daub can work on up to \(Bitmap.maxPixels) pixels at once — "
+            + "8192 × 8192, say — and at most \(Bitmap.maxDimension) on a side. "
+            + "\(width) × \(height) is past that."
+        alert.alertStyle = .warning
+        alert.runModal()
+        return false
+    }
+
+    /// Off in the headless self-test, where a modal alert would wait for a click that is
+    /// never coming.
+    static var showsAlerts = true
 
     // MARK: - View
 

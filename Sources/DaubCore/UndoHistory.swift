@@ -51,25 +51,34 @@ public final class UndoHistory {
         return total
     }
 
+    /// What the last `record` cost, so that cancelling it can be a true rollback: the redo
+    /// branch it cleared and the old steps its trim evicted. Without this, a click that
+    /// turned out to change nothing could leave the user with *fewer* undo steps than
+    /// before they clicked — on a big canvas, with none at all.
+    private var lastRecordUndid: (evicted: [CanvasSnapshot], clearedFuture: [CanvasSnapshot])?
+
     /// Call immediately *before* mutating the canvas.
     public func record(_ snapshot: CanvasSnapshot?) {
         guard let snapshot else { return }
-        past.append(snapshot)
+        let clearedFuture = future
         future.removeAll()
-        trim()
+        past.append(snapshot)
+        lastRecordUndid = (trim(), clearedFuture)
     }
 
     public func undo(current: CanvasSnapshot?) -> CanvasSnapshot? {
         guard let previous = past.popLast() else { return nil }
         if let current { future.append(current) }
-        trim()
+        lastRecordUndid = nil
+        _ = trim()
         return previous
     }
 
     public func redo(current: CanvasSnapshot?) -> CanvasSnapshot? {
         guard let next = future.popLast() else { return nil }
         if let current { past.append(current) }
-        trim()
+        lastRecordUndid = nil
+        _ = trim()
         return next
     }
 
@@ -78,26 +87,47 @@ public final class UndoHistory {
     /// misfired click costs the user a press of ⌘Z.
     @discardableResult
     public func discardLastCheckpoint() -> Bool {
-        past.popLast() != nil
+        guard past.popLast() != nil else { return false }
+        if let undone = lastRecordUndid {
+            past.insert(contentsOf: undone.evicted, at: 0)
+            future = undone.clearedFuture
+            lastRecordUndid = nil
+        }
+        return true
     }
 
-    public func clear() { past.removeAll(); future.removeAll() }
+    public func clear() { past.removeAll(); future.removeAll(); lastRecordUndid = nil }
 
     /// Enforce both ceilings. Over budget, the step dropped is the one furthest from the
     /// present — the oldest undo, or the deepest redo — taken from whichever stack is
     /// longer, so a long run of undos cannot park all the memory in the redo branch.
-    /// One undo step always survives: with nothing to trade, keeping it beats keeping none.
-    private func trim() {
-        if past.count > limit { past.removeFirst(past.count - limit) }
+    ///
+    /// The step nearest the present on *each* side is never dropped, whatever it costs:
+    /// one ⌘Z and one ⇧⌘Z always work. A single snapshot can exceed the whole budget (a
+    /// 8192 x 8192 canvas is 268 MB), and taking the user's only undo away to satisfy a
+    /// number they cannot see is the worse trade.
+    ///
+    /// - Returns: the undo steps it evicted, oldest first, so a cancelled checkpoint can
+    ///   put them back.
+    @discardableResult
+    private func trim() -> [CanvasSnapshot] {
+        var evicted: [CanvasSnapshot] = []
+        if past.count > limit {
+            evicted.append(contentsOf: past.prefix(past.count - limit))
+            past.removeFirst(past.count - limit)
+        }
         if future.count > limit { future.removeFirst(future.count - limit) }
         while byteCount > byteBudget {
-            if past.count > 1, past.count >= future.count {
-                past.removeFirst()
-            } else if !future.isEmpty {
+            let canDropPast = past.count > 1
+            let canDropFuture = future.count > 1
+            if canDropPast, !canDropFuture || past.count >= future.count {
+                evicted.append(past.removeFirst())
+            } else if canDropFuture {
                 future.removeFirst()
             } else {
                 break
             }
         }
+        return evicted
     }
 }

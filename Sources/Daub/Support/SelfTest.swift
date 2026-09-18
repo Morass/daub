@@ -25,6 +25,7 @@ enum SelfTest {
     private static let board = NSPasteboard(name: NSPasteboard.Name("Daub.selftest"))
 
     private static func run() {
+        Editor.showsAlerts = false
         guard let editor = Editor.current, let canvas = editor.canvas else {
             note("FAIL  no editor or canvas")
             exit(1)
@@ -152,6 +153,13 @@ enum SelfTest {
               "whole-canvas steps stay inside the undo memory budget",
               "\(budgeted.history.byteCount / 1_048_576) MB over a budget of \(budgeted.history.byteBudget / 1_048_576) MB")
         check(budgeted.history.canUndo, "and the history keeps at least one step", "no undo left")
+
+        // 12. A canvas past the pixel limit is refused, not allocated.
+        reset(editor, width: 1024, height: 768)
+        editor.resizeCanvas(width: 32768, height: 32768, scaleContents: false)
+        check(editor.canvasSize == CGSize(width: 1024, height: 768),
+              "a resize past the pixel limit is refused instead of allocating 4 GB",
+              "got \(editor.canvasSize)")
 
         FileHandle.standardError.write(Data("selftest: \(failures == 0 ? "all checks passed" : "\(failures) failed")\n".utf8))
         exit(failures == 0 ? 0 : 1)

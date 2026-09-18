@@ -83,7 +83,10 @@ public extension Bitmap {
     /// snapshot did anyway.
     func snapshot(tileSize: Int = Bitmap.snapshotTileSize,
                   reusing previous: CanvasSnapshot? = nil) -> CanvasSnapshot {
-        let side = max(1, tileSize)
+        // Clamped to the canvas as well as to 1: `(width + side - 1)` overflows for a
+        // `tileSize` of `Int.max`, and one tile covering everything is the right answer for
+        // any size past the canvas anyway.
+        let side = max(1, min(tileSize, max(width, height)))
         let columns = (width + side - 1) / side
         let rows = (height + side - 1) / side
         let reusable: CanvasSnapshot? = {

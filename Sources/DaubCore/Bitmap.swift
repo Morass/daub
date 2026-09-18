@@ -29,12 +29,20 @@ public final class Bitmap {
         }
     }
 
+    /// Whether a canvas this size is one Daub will allocate. `init` clamps each side to
+    /// `maxDimension` but says nothing about the area, so 32768 x 32768 would sail through
+    /// it as a 4 GB allocation — ask this before building a canvas from a number a user
+    /// typed.
+    public static func isAllocatable(width: Int, height: Int) -> Bool {
+        width > 0 && height > 0
+            && width <= maxDimension && height <= maxDimension
+            && !width.multipliedReportingOverflow(by: height).overflow
+            && width * height <= maxPixels
+    }
+
     /// Throwing counterpart of `init`, for sizes that come from a file rather than from us.
     public static func checked(width: Int, height: Int, fill: CGColor? = nil) throws -> Bitmap {
-        guard width > 0, height > 0,
-              width <= maxDimension, height <= maxDimension,
-              width.multipliedReportingOverflow(by: height).overflow == false,
-              width * height <= maxPixels
+        guard isAllocatable(width: width, height: height)
         else { throw TooLarge(width: width, height: height) }
         return Bitmap(width: width, height: height, fill: fill)
     }
@@ -86,10 +94,18 @@ public final class Bitmap {
     /// the old picture everywhere except the dirty rectangles a later stroke happened to
     /// repaint, so the gradient appeared in blocks tracing the stroke. A new image each
     /// time has no cache to hit. Building one is pointer work; it copies nothing.
+    /// The provider holds a strong reference to the bitmap for exactly as long as
+    /// CoreGraphics holds the image. Without it, a crop or a canvas resize — which replace
+    /// the document's `Bitmap` outright — could free this buffer while a frame CoreGraphics
+    /// has not finished with still points at it.
     public var liveImage: CGImage? {
         let byteCount = bytesPerRow * height
-        guard let provider = CGDataProvider(dataInfo: nil, data: storage, size: byteCount,
-                                            releaseData: { _, _, _ in })
+        guard let provider = CGDataProvider(
+            dataInfo: Unmanaged.passRetained(self).toOpaque(),
+            data: storage, size: byteCount,
+            releaseData: { info, _, _ in
+                if let info { Unmanaged<Bitmap>.fromOpaque(info).release() }
+            })
         else { return nil }
         let image = CGImage(width: width, height: height,
                             bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: bytesPerRow,
