@@ -49,8 +49,9 @@ enum ImageFile {
 
     // MARK: - Pasteboard
 
-    static func readFromPasteboard() -> CGImage? {
-        let pb = NSPasteboard.general
+    /// - Parameter pb: the board to read. Defaults to the system clipboard; the built-in
+    ///   self-test passes a private one so running it cannot clobber what the user copied.
+    static func readFromPasteboard(_ pb: NSPasteboard = .general) -> CGImage? {
         if let data = pb.data(forType: .tiff) ?? pb.data(forType: .png),
            let source = CGImageSourceCreateWithData(data as CFData, nil) {
             return CGImageSourceCreateImageAtIndex(source, 0, nil)
@@ -61,11 +62,10 @@ enum ImageFile {
         return nil
     }
 
-    static func writeToPasteboard(_ image: CGImage) {
+    static func writeToPasteboard(_ image: CGImage, to pb: NSPasteboard = .general) {
         let rep = NSBitmapImageRep(cgImage: image)
         rep.size = CGSize(width: image.width, height: image.height)
         guard let data = rep.representation(using: .png, properties: [:]) else { return }
-        let pb = NSPasteboard.general
         pb.clearContents()
         pb.setData(data, forType: .png)
         if let tiff = rep.tiffRepresentation { pb.setData(tiff, forType: .tiff) }

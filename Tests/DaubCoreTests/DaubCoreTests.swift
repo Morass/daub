@@ -498,6 +498,20 @@ final class CanvasFitTests: XCTestCase {
                        canvas)
     }
 
+    /// Fractional or sub-pixel sizes must never come back as a request to shrink: the
+    /// caller resizes the canvas to whatever this returns.
+    func testFractionalSizesNeverShrinkTheCanvas() {
+        let tiny = CanvasFit.grown(canvas: CGSize(width: 0.1, height: 0.1),
+                                   toFit: CGSize(width: 0.1, height: 0.1))
+        XCTAssertGreaterThanOrEqual(tiny.width, 1)
+        XCTAssertGreaterThanOrEqual(tiny.height, 1)
+
+        let canvas = CGSize(width: 10.6, height: 10.6)
+        let grown = CanvasFit.grown(canvas: canvas, toFit: CGSize(width: 1, height: 1))
+        XCTAssertGreaterThanOrEqual(grown.width, 10, "rounding must not lose a column")
+        XCTAssertGreaterThanOrEqual(grown.height, 10)
+    }
+
     /// A CGFloat that cannot become an Int must not trap the conversion.
     func testNonsenseSizesDoNotTrap() {
         let canvas = CGSize(width: 640, height: 480)

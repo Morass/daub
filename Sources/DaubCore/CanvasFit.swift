@@ -24,7 +24,10 @@ public enum CanvasFit {
         guard width <= Bitmap.maxDimension, height <= Bitmap.maxDimension,
               width * height <= Bitmap.maxPixels
         else { return canvas }
-        return CGSize(width: width, height: height)
+        // Never below one pixel, and never below the canvas we were handed: a sub-pixel or
+        // fractional canvas size must not come back as a request to shrink the picture.
+        return CGSize(width: max(width, pixels(canvas.width)),
+                      height: max(height, pixels(canvas.height)))
     }
 
     /// Pixel count from a size, clamped on the way in: one past the dimension limit still
@@ -33,6 +36,6 @@ public enum CanvasFit {
     private static func pixels(_ value: CGFloat) -> Int {
         guard value.isFinite, value > 0 else { return 1 }
         // Clamp as a CGFloat, before the conversion: `Int(1e30)` traps outright.
-        return Int(min(value.rounded(), CGFloat(Bitmap.maxDimension + 1)))
+        return max(1, Int(min(value.rounded(), CGFloat(Bitmap.maxDimension + 1))))
     }
 }

@@ -103,24 +103,29 @@ final class Editor: ObservableObject {
     ///
     /// This is deliberately not the same as ⌘V. A paste lands *in* the picture you are
     /// working on; this one replaces it, so it asks about unsaved work exactly like Open.
-    func newFromClipboard() {
-        guard let image = ImageFile.readFromPasteboard() else {
+    func newFromClipboard(from pasteboard: NSPasteboard = .general) {
+        guard let image = ImageFile.readFromPasteboard(pasteboard) else {
             noImageOnClipboard()
             return
         }
-        guard confirmDiscardIfNeeded() else { return }
+        // Build the replacement *before* asking about unsaved work: an image too large to
+        // open must not land after the user has already answered Discard, which would
+        // leave the old picture on screen and marked clean.
+        let new: PaintDocument
         do {
-            let new = try PaintDocument(image: image, url: nil)
-            // Pixels that exist nowhere on disk: dirty from the first frame, so closing
-            // the window asks before throwing a screenshot away.
-            new.markDirty()
-            replaceDocument(new)
-            // A 5K screenshot at 1:1 shows a corner of itself. Fit it to the window —
-            // shrinking only, so a small clipboard image is not blown up.
-            canvas?.zoomToFitIfTooLarge()
+            new = try PaintDocument(image: image, url: nil)
         } catch {
             present(error)
+            return
         }
+        guard confirmDiscardIfNeeded() else { return }
+        // Pixels that exist nowhere on disk: dirty from the first frame, so closing the
+        // window asks before throwing a screenshot away.
+        new.markDirty()
+        replaceDocument(new)
+        // A 5K screenshot at 1:1 shows a corner of itself. Fit it to the window —
+        // shrinking only, so a small clipboard image is not blown up.
+        canvas?.zoomToFitIfTooLarge()
     }
 
     private func noImageOnClipboard() {
@@ -207,7 +212,14 @@ final class Editor: ObservableObject {
 
     // MARK: - Edit
 
-    func undo() { if document.undo() { canvas?.documentDidChange(); didCommit() } }
+    /// A floating selection lives outside the history, so undoing with one on screen would
+    /// throw those pixels away with nothing able to bring them back. Stamp it down first:
+    /// the step being undone already holds the "before" snapshot, so ⌘Z still lands where
+    /// the user expects — and ⇧⌘Z now returns the paste instead of an empty canvas.
+    func undo() {
+        canvas?.commitFloatingSelection()
+        if document.undo() { canvas?.documentDidChange(); didCommit() }
+    }
     func redo() { if document.redo() { canvas?.documentDidChange(); didCommit() } }
 
     // Cut/Copy/Paste/Select All are intentionally absent: they travel the responder

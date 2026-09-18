@@ -7,7 +7,8 @@ import DaubCore
 ///     DAUB_SELFTEST=clipboard build/Daub.app/Contents/MacOS/Daub
 ///
 /// Prints one line per check and exits non-zero on the first failure. `make selftest`
-/// wraps it. It uses the general pasteboard, so it does clear whatever was on it.
+/// wraps it. It drives a private pasteboard, not the system clipboard, so running it does
+/// not throw away whatever the user had copied.
 @MainActor
 enum SelfTest {
     static func runIfRequested() {
@@ -19,6 +20,10 @@ enum SelfTest {
 
     private static var failures = 0
 
+    /// A board of our own. Everything under test takes the pasteboard as a parameter for
+    /// exactly this reason.
+    private static let board = NSPasteboard(name: NSPasteboard.Name("Daub.selftest"))
+
     private static func run() {
         guard let editor = Editor.current, let canvas = editor.canvas else {
             note("FAIL  no editor or canvas")
@@ -27,7 +32,7 @@ enum SelfTest {
 
         // 1. A whole picture imported from the clipboard sizes the canvas to it.
         put(image(width: 2400, height: 1600, colour: .systemBlue))
-        editor.newFromClipboard()
+        editor.newFromClipboard(from: board)
         check(editor.canvasSize == CGSize(width: 2400, height: 1600),
               "New from Clipboard sizes the canvas to the clipboard image",
               "got \(editor.canvasSize)")
@@ -38,7 +43,7 @@ enum SelfTest {
         // 2. Pasting into a smaller canvas grows the canvas instead of clipping.
         reset(editor, width: 1024, height: 768)
         put(image(width: 2000, height: 1500, colour: .systemRed))
-        canvas.pasteFromClipboard()
+        canvas.pasteFromClipboard(from: board)
         check(editor.canvasSize == CGSize(width: 2000, height: 1500),
               "a paste larger than the canvas grows the canvas", "got \(editor.canvasSize)")
         check(canvas.hasFloatingSelection, "the paste is floating, ready to be dragged", "no float")
@@ -56,10 +61,41 @@ enum SelfTest {
         check(restored.r > 200 && restored.g > 200 && restored.b > 200,
               "the canvas is white again after the undo", "corner pixel \(restored)")
 
-        // 4. A small paste leaves the canvas alone.
+        // 4. Redo after that undo brings the pasted picture back, canvas and all.
+        editor.redo()
+        check(editor.canvasSize == CGSize(width: 2000, height: 1500),
+              "redo puts the grown canvas back", "got \(editor.canvasSize)")
+        let redone = editor.document.bitmap.pixel(x: 0, y: editor.document.height - 1)
+        check(redone.r > 200 && redone.g < 120,
+              "redo puts the pasted pixels back, not an empty canvas", "corner pixel \(redone)")
+
+        // 5. Escape cancels a paste that grew the canvas — including the growth.
+        reset(editor, width: 1024, height: 768)
+        put(image(width: 2000, height: 1500, colour: .systemRed))
+        canvas.pasteFromClipboard(from: board)
+        canvas.keyDown(with: escapeKey())
+        check(editor.canvasSize == CGSize(width: 1024, height: 768),
+              "Escape after a grown paste puts the canvas size back",
+              "got \(editor.canvasSize)")
+        let cancelled = editor.document.bitmap.pixel(x: 0, y: editor.document.height - 1)
+        check(cancelled.r > 200 && cancelled.g > 200 && cancelled.b > 200,
+              "Escape leaves no pasted pixels behind", "corner pixel \(cancelled)")
+
+        // 6. Undoing with the paste still floating keeps it in the history.
+        reset(editor, width: 1024, height: 768)
+        put(image(width: 1400, height: 900, colour: .systemRed))
+        canvas.pasteFromClipboard(from: board)
+        editor.undo()
+        check(editor.canvasSize == CGSize(width: 1024, height: 768),
+              "undo while the paste is still floating removes it", "got \(editor.canvasSize)")
+        editor.redo()
+        check(editor.canvasSize == CGSize(width: 1400, height: 900),
+              "and redo brings that floating paste back", "got \(editor.canvasSize)")
+
+        // 7. A small paste leaves the canvas alone.
         reset(editor, width: 1024, height: 768)
         put(image(width: 200, height: 100, colour: .systemGreen))
-        canvas.pasteFromClipboard()
+        canvas.pasteFromClipboard(from: board)
         check(editor.canvasSize == CGSize(width: 1024, height: 768),
               "a paste that already fits does not resize the picture", "got \(editor.canvasSize)")
 
@@ -86,7 +122,13 @@ enum SelfTest {
     }
 
     private static func put(_ image: CGImage) {
-        ImageFile.writeToPasteboard(image)
+        ImageFile.writeToPasteboard(image, to: board)
+    }
+
+    private static func escapeKey() -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                         windowNumber: 0, context: nil, characters: "\u{1b}",
+                         charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
     }
 
     private static func check(_ passed: Bool, _ what: String, _ detail: @autoclosure () -> String) {

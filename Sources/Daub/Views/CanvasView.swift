@@ -567,6 +567,9 @@ final class CanvasView: NSView {
             doc.cancelCheckpoint()
         } else if restoringPixels {
             doc.undo()
+            // The undo may have put back a smaller canvas (a paste that grew it), so the
+            // view has to be resized to match before it draws.
+            applyZoom()
         }
         floatingChangedPixels = false
         needsDisplay = true
@@ -633,8 +636,13 @@ final class CanvasView: NSView {
         deleteSelection()
     }
 
-    func pasteFromClipboard() {
-        guard let image = ImageFile.readFromPasteboard() else { return }
+    func pasteFromClipboard(from pasteboard: NSPasteboard = .general) {
+        guard let image = ImageFile.readFromPasteboard(pasteboard) else { return }
+        // ⌘V can arrive mid-drag (trackpad in one hand, keyboard in the other). Finish the
+        // drag first: switching tool below would otherwise leave mouse-up looking for a
+        // shape kind the tool no longer has, and an airbrush timer spraying into a canvas
+        // that is about to be resized.
+        endActiveDrag()
         commitFloatingSelection()
         // Switch tools *first*: changing tool commits any floating selection, which would
         // otherwise stamp the pasted image the instant it was created.
@@ -646,18 +654,34 @@ final class CanvasView: NSView {
         // puts both the pixels and the canvas size back.
         let incoming = CGSize(width: image.width, height: image.height)
         let grown = CanvasFit.grown(canvas: doc.size, toFit: incoming)
-        if grown != doc.size {
+        let didGrow = grown != doc.size
+        if didGrow {
             doc.growCanvas(to: grown, fill: editor.secondaryNS)
             applyZoom()
         }
         let rect = CGRect(x: 0, y: CGFloat(doc.height - image.height),
                           width: CGFloat(image.width), height: CGFloat(image.height))
-        floatingChangedPixels = false           // a paste has not touched the canvas yet
+        // A plain paste has not touched the canvas — but growing it has, and that must be
+        // undone if the paste is then cancelled with Escape.
+        floatingChangedPixels = didGrow
         floating = Floating(image: image, rect: rect)
         editor.readout.selection = rect.size
         startAnts()
         needsDisplay = true
         editor.didCommit()
+        if !didGrow, !CanvasFit.fits(incoming, in: doc.size) { warnPasteIsClipped(incoming) }
+    }
+
+    /// The one case growth cannot solve: an image whose bounding canvas would be past what
+    /// Daub will allocate. It is pasted as far as it goes; saying so beats a silent crop.
+    private func warnPasteIsClipped(_ incoming: CGSize) {
+        let alert = NSAlert()
+        alert.messageText = "The clipboard picture is too large to fit on this canvas."
+        alert.informativeText = "It is \(Int(incoming.width)) x \(Int(incoming.height)), and a canvas big "
+            + "enough to hold it would be past Daub's limit of \(Bitmap.maxPixels) pixels. "
+            + "What fits has been pasted; the rest is not there. Crop or shrink the picture "
+            + "before copying it if you need all of it."
+        alert.runModal()
     }
 
     private func startAnts() {
@@ -831,7 +855,9 @@ final class CanvasView: NSView {
         let margin: CGFloat = 40
         let fit = min((clip.width - margin) / doc.size.width, (clip.height - margin) / doc.size.height)
         guard fit < 1 else { return }
-        editor.zoom = max(0.05, (fit * 100).rounded() / 100)
+        // Round *down*: rounding to the nearest percent can land above the fit and leave a
+        // sliver of the picture outside the window, which is exactly what this avoids.
+        editor.zoom = max(0.01, (fit * 100).rounded(.down) / 100)
     }
 
     func zoomToFit() {
