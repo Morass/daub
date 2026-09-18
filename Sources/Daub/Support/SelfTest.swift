@@ -231,6 +231,44 @@ enum SelfTest {
               "a history of strokes costs a fraction of one canvas",
               "\(doc3.history.byteCount / 1024) KB against a canvas of \(canvasBytes / 1_048_576) MB")
 
+        // 13a. A fat diagonal brush stroke: the capture squares are spaced along the path,
+        // so a wide stroke's edges have to fall inside them.
+        reset(editor, width: 600, height: 600)
+        PaintDocument.verifiesUndo = true
+        editor.strokeWidth = 100
+        editor.tool = .brush
+        drag(canvas, from: CGPoint(x: 120, y: 120), to: CGPoint(x: 480, y: 480))
+        editor.undo()
+        check(PaintDocument.takeVerificationFailures().isEmpty,
+              "undo puts back every pixel of a 100-wide diagonal stroke", "see above")
+
+        // 13b. ⌘Z in the middle of a drag. The stroke must not go on painting into a step
+        // that is no longer being journalled.
+        reset(editor, width: 400, height: 400)
+        editor.tool = .brush
+        editor.strokeWidth = 20
+        if let down = mouse(.leftMouseDown, canvas, at: CGPoint(x: 50, y: 50)),
+           let moved = mouse(.leftMouseDragged, canvas, at: CGPoint(x: 150, y: 150)),
+           let more = mouse(.leftMouseDragged, canvas, at: CGPoint(x: 250, y: 250)),
+           let up = mouse(.leftMouseUp, canvas, at: CGPoint(x: 350, y: 350)) {
+            canvas.mouseDown(with: down)
+            canvas.mouseDragged(with: moved)
+            editor.undo()                       // mid-drag
+            canvas.mouseDragged(with: more)
+            canvas.mouseUp(with: up)
+            let later = editor.document.bitmap.pixel(x: 300, y: 300)
+            check(later.r > 200 && later.g > 200 && later.b > 200,
+                  "an undo in the middle of a drag ends the stroke rather than letting it "
+                  + "paint into a step nobody is recording",
+                  "pixel \(later) — the drag went on painting")
+            let earlier = editor.document.bitmap.pixel(x: 100, y: 100)
+            check(earlier.r > 200 && earlier.g > 200 && earlier.b > 200,
+                  "and the half of the stroke that was already painted is undone",
+                  "pixel \(earlier)")
+        }
+        editor.strokeWidth = 4
+        PaintDocument.verifiesUndo = false
+
         // 14. A hairline from corner to corner has the bounding box of the whole picture
         // and covers a thousandth of it. The step must cost what it covers.
         reset(editor, width: 2000, height: 1500)

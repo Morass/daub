@@ -127,6 +127,29 @@ final class ShapesTests: XCTestCase {
     }
 }
 
+/// Reported: a U-shaped region, filled with a colour within tolerance of the seed, is left
+/// with gaps because the span scan skips a run after a visited pixel. Not reproduced — the
+/// skipped run is the one the pushed seed claims — and this pins it.
+final class FloodFillShapeTests: XCTestCase {
+    func testAUShapeFillsCompletelyWhenTheNewColourIsWithinTolerance() {
+        let white = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
+        let b = Bitmap(width: 32, height: 32, fill: white)
+        // A U: a wall down the middle from the top, leaving a channel round the bottom.
+        b.context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+        b.context.fill(CGRect(x: 14, y: 8, width: 4, height: 24))
+
+        let near = RGBA(r: 245, g: 245, b: 245)          // within tolerance of white
+        let filled = FloodFill.fill(b, x: 0, y: 0, with: near, tolerance: 20)
+        XCTAssertNotNil(filled)
+        for y in 0..<32 {
+            for x in 0..<32 where !(x >= 14 && x < 18 && y >= 8) {
+                XCTAssertEqual(b.pixel(x: x, y: y), near,
+                               "(\(x),\(y)) was left unfilled on the far side of the wall")
+            }
+        }
+    }
+}
+
 final class UndoHistoryTests: XCTestCase {
     private func white() -> CGColor { CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1) }
 
@@ -282,6 +305,24 @@ final class UndoHistoryTests: XCTestCase {
         h.replaceNewestStep(with: .whole(b.snapshot()))            // …which grows the canvas
         h.discardLastCheckpoint()
         XCTAssertEqual(h.depth, before, "cancelling a promoted step must restore the history")
+        XCTAssertTrue(h.canUndo)
+    }
+
+    /// Keeping a cancelled step's rollback must not cost the user live undo steps, and the
+    /// memory it does hold must be released at the next edit rather than accumulating.
+    func testTheRollbackIsTransientAndDoesNotEvictLiveSteps() {
+        let b = Bitmap(width: 512, height: 512, fill: white())     // 1 MB a snapshot
+        let h = UndoHistory(byteBudget: 3 << 20)
+        var depths: [Int] = []
+        for value in 0..<8 {
+            b.setPixel(x: value, y: 0, to: RGBA(r: UInt8(value), g: 0, b: 0))
+            h.record(.whole(b.snapshot()))
+            depths.append(h.depth)
+            XCTAssertLessThanOrEqual(h.byteCount, h.byteBudget, "the reachable history is bounded")
+            // The overshoot is one recording's worth, never a growing one.
+            XCTAssertLessThanOrEqual(h.retainedByteCount, h.byteBudget + (1 << 20) * 2)
+        }
+        XCTAssertEqual(depths.last, depths[3], "the depth settles instead of shrinking away")
         XCTAssertTrue(h.canUndo)
     }
 

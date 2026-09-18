@@ -54,7 +54,22 @@ public final class UndoHistory {
         return nil
     }
 
-    /// Distinct bytes actually held, counting a tile shared by twenty snapshots once.
+    /// Everything this history is holding, including the steps kept aside in case the
+    /// newest checkpoint is cancelled. That set is released at the next edit, undo or redo,
+    /// so it is a transient overshoot of the budget, never a growing one — but it is real
+    /// memory while it lasts, and `byteCount` alone would understate it.
+    public var retainedByteCount: Int {
+        var seen = Set<ObjectIdentifier>()
+        var total = 0
+        for step in past + future + (lastRecordUndid.map { $0.evicted + $0.clearedFuture } ?? []) {
+            for tile in step.tiles where seen.insert(ObjectIdentifier(tile)).inserted {
+                total += tile.byteCount
+            }
+        }
+        return total
+    }
+
+    /// Distinct bytes of history the budget governs: the steps the user can reach.
     public var byteCount: Int {
         var seen = Set<ObjectIdentifier>()
         var total = 0
@@ -64,12 +79,6 @@ public final class UndoHistory {
             }
         }
         for step in future {
-            for tile in step.tiles where seen.insert(ObjectIdentifier(tile)).inserted {
-                total += tile.byteCount
-            }
-        }
-        // The steps held aside for a rollback are still in memory, so they still count.
-        for step in (lastRecordUndid.map { $0.evicted + $0.clearedFuture } ?? []) {
             for tile in step.tiles where seen.insert(ObjectIdentifier(tile)).inserted {
                 total += tile.byteCount
             }
@@ -88,6 +97,11 @@ public final class UndoHistory {
         let clearedFuture = future
         future.removeAll()
         past.append(step)
+        // Whatever this recording cost — the redo branch it abandoned, the oldest steps the
+        // budget made it evict — is kept until the next edit, undo or redo, in case the step
+        // turns out to be cancelled. It is deliberately *not* counted against the budget:
+        // trimming live steps to make room for insurance is the wrong trade, and a click
+        // that changes nothing must never cost the user a step they had.
         lastRecordUndid = (trim(), clearedFuture)
     }
 
@@ -189,11 +203,6 @@ public final class UndoHistory {
                 evicted.append(past.removeFirst())
             } else if canDropFuture {
                 future.removeFirst()
-            } else if lastRecordUndid != nil {
-                // Last resort: let go of the steps held aside in case the newest checkpoint
-                // is cancelled. Cancelling then still puts the pixels back; what it can no
-                // longer do is resurrect the steps that recording it evicted.
-                lastRecordUndid = nil
             } else {
                 break
             }
