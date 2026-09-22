@@ -28,6 +28,8 @@ final class CanvasView: NSView {
     }
 
     private var drag: Drag = .none
+    private var brushPath: CGMutablePath?
+    private var brushStyle: (width: CGFloat, opacity: CGFloat, antialias: Bool)?
     private var dragColour: NSColor = .black
     /// Which mouse button started this drag. Comparing NSColors would misfire whenever
     /// the foreground and background colours happen to be equal.
@@ -125,6 +127,8 @@ final class CanvasView: NSView {
 
         ctx.saveGState()
         ctx.scaleBy(x: zoom, y: zoom)
+
+        if let brushPath { drawBrushPath(brushPath, in: ctx) }
 
         if let floating {
             ctx.interpolationQuality = .none
@@ -252,7 +256,17 @@ final class CanvasView: NSView {
             commitFloatingSelection()
             doc.checkpoint()
             drag = .stroke(last: p)
-            paintSegment(from: p, to: p)
+            if editor.tool == .brush {
+                brushPath = CGMutablePath()
+                brushStyle = (CGFloat(editor.strokeWidth), CGFloat(editor.brushOpacity), editor.antialias)
+                brushPath?.move(to: p)
+                brushPath?.addLine(to: p)
+                doc.willTouchAlong(from: p, to: p, reach: editor.strokeWidth + 2)
+                invalidate(canvasRect: CGRect(x: p.x, y: p.y, width: 0, height: 0)
+                    .insetBy(dx: -editor.strokeWidth, dy: -editor.strokeWidth))
+            } else {
+                paintSegment(from: p, to: p)
+            }
 
         case .airbrush:
             commitFloatingSelection()
@@ -350,7 +364,11 @@ final class CanvasView: NSView {
         reportCursor(p)
         switch drag {
         case .stroke(let last):
-            paintSegment(from: last, to: p)
+            if editor.tool == .brush, brushPath != nil {
+                if last != p { continueBrush(from: last, to: p) }
+            } else {
+                paintSegment(from: last, to: p)
+            }
             drag = .stroke(last: p)
 
         case .spray:
@@ -426,7 +444,11 @@ final class CanvasView: NSView {
             drag = .none
             editor.didCommit()
 
-        case .stroke:
+        case .stroke(let last):
+            if editor.tool == .brush {
+                if last != p { continueBrush(from: last, to: p) }
+                finishBrushStroke()
+            }
             drag = .none
             editor.didCommit()
 
@@ -452,6 +474,36 @@ final class CanvasView: NSView {
     }
 
     // MARK: - Painting primitives
+
+    private func drawBrushPath(_ path: CGPath, in ctx: CGContext) {
+        guard let brushStyle else { return }
+        ctx.saveGState()
+        ctx.setShouldAntialias(brushStyle.antialias)
+        ctx.setStrokeColor(dragColour.withAlphaComponent(brushStyle.opacity).cgColor)
+        ctx.setLineWidth(brushStyle.width)
+        ctx.setLineCap(.round)
+        ctx.setLineJoin(.round)
+        ctx.addPath(path)
+        ctx.strokePath()
+        ctx.restoreGState()
+    }
+
+    private func continueBrush(from a: CGPoint, to b: CGPoint) {
+        guard let brushPath, let brushStyle else { return }
+        doc.willTouchAlong(from: a, to: b, reach: brushStyle.width + 2)
+        brushPath.addLine(to: b)
+        invalidate(canvasRect: CGRect.normalised(from: a, to: b)
+            .insetBy(dx: -brushStyle.width, dy: -brushStyle.width))
+    }
+
+    private func finishBrushStroke() {
+        guard let brushPath else { return }
+        drawBrushPath(brushPath, in: doc.context)
+        self.brushPath = nil
+        brushStyle = nil
+        doc.markDirty()
+        needsDisplay = true
+    }
 
     /// Linear gradient from the foreground colour to the background colour along the drag,
     /// clipped to the selection when there is one. Ten lines of CoreGraphics, and it is the
@@ -852,6 +904,7 @@ final class CanvasView: NSView {
     // MARK: - Lifecycle hooks used by Editor
 
     func toolWillChange() {
+        endActiveDrag()
         commitText()
         if editor.tool != .select { commitFloatingSelection(); deselect() }
     }
@@ -862,6 +915,7 @@ final class CanvasView: NSView {
     func endActiveDrag() {
         sprayTimer?.invalidate()
         sprayTimer = nil
+        finishBrushStroke()
         drag = .none
     }
 

@@ -292,6 +292,32 @@ enum SelfTest {
               "swapping one pixel's colour costs one tile",
               "\(doc5.history.byteCount / 1024) KB")
 
+        // 16. One translucent brush stroke must apply its opacity once. Repeated drag
+        // events at the same point used to stack round caps into a dark dot.
+        reset(editor, width: 160, height: 80)
+        editor.tool = .brush
+        editor.strokeWidth = 16
+        editor.brushOpacity = 0.25
+        editor.primary = .black
+        let points = [CGPoint(x: 20, y: 40), CGPoint(x: 40, y: 40),
+                      CGPoint(x: 60, y: 40)] + Array(repeating: CGPoint(x: 60, y: 40), count: 10)
+                      + [CGPoint(x: 80, y: 40)]
+        if let down = mouse(.leftMouseDown, canvas, at: points[0]),
+           let up = mouse(.leftMouseUp, canvas, at: points.last!) {
+            canvas.mouseDown(with: down)
+            for point in points.dropFirst() {
+                if let moved = mouse(.leftMouseDragged, canvas, at: point) {
+                    canvas.mouseDragged(with: moved)
+                }
+            }
+            canvas.mouseUp(with: up)
+        }
+        let even = editor.document.bitmap.pixel(x: 50, y: 40)
+        let paused = editor.document.bitmap.pixel(x: 60, y: 40)
+        check(abs(Int(even.r) - Int(paused.r)) <= 5 && paused.r > 180,
+              "a paused translucent brush stays as light as the rest of its stroke",
+              "moving \(even), paused \(paused)")
+
         FileHandle.standardError.write(Data("selftest: \(failures == 0 ? "all checks passed" : "\(failures) failed")\n".utf8))
         exit(failures == 0 ? 0 : 1)
     }

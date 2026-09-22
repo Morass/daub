@@ -225,6 +225,7 @@ final class Editor: ObservableObject {
     /// the step being undone already holds the "before" snapshot, so ⌘Z still lands where
     /// the user expects — and ⇧⌘Z now returns the paste instead of an empty canvas.
     func undo() {
+        canvas?.endActiveDrag()
         canvas?.commitFloatingSelection()
         if document.undo() { canvas?.documentDidChange(); didCommit() }
     }
