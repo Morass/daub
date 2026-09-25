@@ -75,7 +75,7 @@ keystroke from the text tool.
 |---|---|---|---|
 | ✎ | **Pencil** | `P` | One hard pixel, no anti-aliasing, ever. Size 1–16 px. This is the tool for pixel work. |
 | 🖌 | **Brush** | `B` | Smooth round stroke, 1–48 px, with an opacity slider. |
-| ✳ | **Airbrush** | `A` | Sprays while you hold still, 30 puffs a second. Radius and flow. |
+| 🧴 | **Airbrush** | `A` | Sprays while you hold still, 30 puffs a second. Radius and flow. |
 | ⌫ | **Eraser** | `E` | Paints the background colour — or rubs through to transparency on a canvas that has alpha (see below). |
 | 💧 | **Fill** | `F` | Flood fill with a tolerance slider for anti-aliased or JPEG-noisy edges. |
 | 💉 | **Pick Colour** | `I` | Click to sample; snaps back to the tool you were using. Right-click samples into the background. |
@@ -88,6 +88,13 @@ keystroke from the text tool.
 | ▢ | **Rounded Rectangle** | `D` | |
 | ◯ | **Ellipse** | `C` | ⇧ makes it a circle. |
 | ⬚ | **Select** | `S` | Rectangular marquee — see below. |
+
+While you paint, the pointer is an outline of the tool's real tip at the current zoom — a
+circle for the brush, clone stamp, line and shapes, a square for the pencil and eraser
+(which stamp square pixels), a dotted circle for the airbrush's spray area — so you see how
+wide the stroke will be before you make it. It follows the size slider and `[` `]` as you
+change them. Tips too small to see, or too big to draw as a pointer, fall back to a
+crosshair.
 
 Shape tools have a three-way style picker: **outline · filled · filled with outline**.
 Outline uses the dragging button's colour; the fill uses the other one.

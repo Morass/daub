@@ -318,6 +318,38 @@ enum SelfTest {
               "a paused translucent brush stays as light as the rest of its stroke",
               "moving \(even), paused \(paused)")
 
+        // 9. The cursor outlines the tool's real width at the current zoom.
+        editor.zoom = 1
+        editor.tool = .brush
+        editor.strokeWidth = 12
+        let brushAt1 = canvas.tipCursor()
+        editor.zoom = 4
+        let brushAt4 = canvas.tipCursor()
+        check(brushAt1.map { $0.image.size.width } == 16 && brushAt4.map { $0.image.size.width } == 52,
+              "the brush cursor is as wide as the stroke, and grows with zoom",
+              "widths \(String(describing: brushAt1?.image.size)) \(String(describing: brushAt4?.image.size))")
+        check(brushAt4.map { $0.hotSpot == NSPoint(x: 26, y: 26) } == true,
+              "the brush cursor paints from its centre", "hot spot \(String(describing: brushAt4?.hotSpot))")
+        editor.zoom = 1
+        editor.tool = .airbrush
+        editor.sprayRadius = 14
+        check(canvas.tipCursor().map { $0.image.size.width } == 33,
+              "the airbrush cursor spans the whole spray area", "\(String(describing: canvas.tipCursor()?.image.size))")
+        editor.tool = .pencil
+        editor.pencilSize = 1
+        check(canvas.tipCursor() == nil, "a one-pixel pencil keeps the crosshair", "got an outline")
+        if let dir = ProcessInfo.processInfo.environment["DAUB_SELFTEST_CURSORS"] {
+            let shots: [(Tool, CGFloat, String)] = [(.brush, 4, "brush"), (.airbrush, 3, "airbrush"), (.eraser, 2, "eraser")]
+            for (tool, zoom, name) in shots {
+                editor.tool = tool
+                editor.zoom = zoom
+                if let image = canvas.tipCursor()?.image, let tiff = image.tiffRepresentation,
+                   let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                    try? png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("\(name).png"))
+                }
+            }
+        }
+
         FileHandle.standardError.write(Data("selftest: \(failures == 0 ? "all checks passed" : "\(failures) failed")\n".utf8))
         exit(failures == 0 ? 0 : 1)
     }

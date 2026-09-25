@@ -68,7 +68,7 @@ enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .select: "rectangle.dashed"
         case .pencil: "pencil.tip"
         case .brush: "paintbrush.pointed"
-        case .airbrush: "circle.dotted"
+        case .airbrush: nil          // no spray can in SF Symbols; drawn in ToolIcon
         case .eraser: "eraser"
         case .fill: "drop.fill"
         case .picker: "eyedropper"
@@ -125,6 +125,32 @@ enum Tool: String, CaseIterable, Identifiable, Sendable {
 }
 
 enum SizeKnob { case pencil, stroke, eraser, spray }
+
+extension Tool {
+    /// The outline the cursor draws for tools that paint with a width. Fill, picker,
+    /// text and the selection keep their system cursors.
+    var cursorTip: BrushCursor.Tip? {
+        switch sizeKnob {
+        case .pencil, .eraser: .square
+        case .stroke: .circle
+        case .spray: .spray
+        case nil: nil
+        }
+    }
+}
+
+extension Editor {
+    /// The size setting the current tool paints with.
+    var toolSize: Double {
+        switch tool.sizeKnob {
+        case .pencil: pencilSize
+        case .stroke: strokeWidth
+        case .eraser: eraserSize
+        case .spray: sprayRadius
+        case nil: 0
+        }
+    }
+}
 
 extension Tool {
     /// Each tool carries its own colour so the toolbox reads as a set of instruments

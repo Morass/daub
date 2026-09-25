@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Toolbox glyph: SF Symbol where one reads cleanly, hand-drawn vector where it doesn't.
 ///
-/// The shape tools draw their own glyph — a real rectangle beats any symbol that merely
+/// The shape tools and the airbrush draw their own glyph — a real rectangle beats any symbol that merely
 /// suggests one, and it stays crisp at every size without shipping a single asset.
 struct ToolIcon: View {
     let tool: Tool
@@ -50,6 +50,20 @@ private struct ShapeGlyph: View {
                     path.addEllipse(in: r)
                 case .gradient:
                     path.addRect(r)
+                case .airbrush:
+                    // A spray can, its nozzle pointing right, and a fan of dots leaving it.
+                    let w = r.width, h = r.height
+                    let body = CGRect(x: r.minX, y: r.minY + h * 0.36, width: w * 0.44, height: h * 0.64)
+                    path.addRoundedRect(in: body, cornerSize: CGSize(width: 2, height: 2))
+                    let cap = CGRect(x: body.minX + w * 0.1, y: r.minY + h * 0.16,
+                                     width: w * 0.24, height: h * 0.2)
+                    path.addRect(cap)
+                    path.move(to: CGPoint(x: cap.maxX, y: cap.midY))
+                    path.addLine(to: CGPoint(x: cap.maxX + w * 0.1, y: cap.midY))
+                    for (dx, dy) in [(0.74, 0.02), (0.98, 0.02), (0.86, 0.26), (0.98, 0.5), (0.74, 0.5)] {
+                        let c = CGPoint(x: r.minX + w * dx, y: r.minY + h * dy)
+                        path.addEllipse(in: CGRect(x: c.x - 0.4, y: c.y - 0.4, width: 0.8, height: 0.8))
+                    }
                 default:
                     path.addEllipse(in: r.insetBy(dx: r.width / 3, dy: r.height / 3))
                 }

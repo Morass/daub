@@ -899,3 +899,32 @@ final class CanvasFitTests: XCTestCase {
         XCTAssertEqual(grown, CGSize(width: 10, height: 10))
     }
 }
+
+final class BrushCursorTests: XCTestCase {
+    /// The outline is the stroke's real width on screen: size times zoom.
+    func testOutlineFollowsSizeAndZoom() {
+        XCTAssertEqual(BrushCursor.viewDiameter(tip: .circle, size: 12, zoom: 1), 12)
+        XCTAssertEqual(BrushCursor.viewDiameter(tip: .circle, size: 12, zoom: 4), 48)
+        XCTAssertEqual(BrushCursor.viewDiameter(tip: .circle, size: 12, zoom: 0.5), 6)
+    }
+
+    /// The airbrush knob is a radius; its outline must span the whole spray area.
+    func testSprayOutlineIsTheWholeArea() {
+        XCTAssertEqual(BrushCursor.viewDiameter(tip: .spray, size: 14, zoom: 1), 29)
+    }
+
+    /// The pencil and eraser stamp whole pixels, so a fractional size draws its floor.
+    func testSquareTipIsWholePixels() {
+        XCTAssertEqual(BrushCursor.canvasDiameter(tip: .square, size: 12.7), 12)
+        XCTAssertEqual(BrushCursor.canvasDiameter(tip: .square, size: 0.2), 1)
+    }
+
+    /// Too small to read or too big to draw: the caller falls back to a crosshair
+    /// instead of showing an outline that lies about the width.
+    func testUnreadableOrUndrawableSizesFallBack() {
+        XCTAssertNil(BrushCursor.viewDiameter(tip: .square, size: 1, zoom: 1))
+        XCTAssertNil(BrushCursor.viewDiameter(tip: .circle, size: 48, zoom: 8))
+        XCTAssertNil(BrushCursor.viewDiameter(tip: .circle, size: 12, zoom: .nan))
+        XCTAssertNotNil(BrushCursor.viewDiameter(tip: .square, size: 1, zoom: 8))
+    }
+}

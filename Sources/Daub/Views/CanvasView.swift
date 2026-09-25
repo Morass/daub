@@ -964,9 +964,63 @@ final class CanvasView: NSView {
         let cursor: NSCursor = switch editor.tool {
         case .text: .iBeam
         case .select: .crosshair
-        default: .crosshair
+        default: tipCursor() ?? .crosshair
         }
         addCursorRect(bounds, cursor: cursor)
+    }
+
+    private struct CursorKey: Equatable {
+        var tool: Tool
+        var size: Double
+        var zoom: CGFloat
+    }
+    private var cursorKey: CursorKey?
+    private var cachedTipCursor: (key: CursorKey, cursor: NSCursor?)?
+
+    /// Called on every editor change; rebuilds the cursor only when the tool, its size or
+    /// the zoom moved, so a size slider drag shows the new width as it slides.
+    func refreshCursorIfNeeded() {
+        let key = CursorKey(tool: editor.tool, size: editor.toolSize, zoom: zoom)
+        guard key != cursorKey else { return }
+        cursorKey = key
+        window?.invalidateCursorRects(for: self)
+    }
+
+    /// An outline exactly as wide on screen as the stroke will be, with a small centre
+    /// mark. Drawn twice, dark over light, so it reads on any colour underneath.
+    func tipCursor() -> NSCursor? {
+        let key = CursorKey(tool: editor.tool, size: editor.toolSize, zoom: zoom)
+        if let cached = cachedTipCursor, cached.key == key { return cached.cursor }
+        var cursor: NSCursor?
+        if let tip = editor.tool.cursorTip,
+           let d = BrushCursor.viewDiameter(tip: tip, size: key.size, zoom: key.zoom) {
+            let side = ceil(d) + 4
+            let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+                let outline = CGRect(x: (side - d) / 2, y: (side - d) / 2, width: d, height: d)
+                let shape: NSBezierPath = tip == .square
+                    ? NSBezierPath(rect: outline)
+                    : NSBezierPath(ovalIn: outline)
+                let mid = CGPoint(x: rect.midX, y: rect.midY)
+                let arm = min(3, d / 4)
+                let mark = NSBezierPath()
+                mark.move(to: CGPoint(x: mid.x - arm, y: mid.y)); mark.line(to: CGPoint(x: mid.x + arm, y: mid.y))
+                mark.move(to: CGPoint(x: mid.x, y: mid.y - arm)); mark.line(to: CGPoint(x: mid.x, y: mid.y + arm))
+                for (colour, width) in [(NSColor.white.withAlphaComponent(0.85), 3.0), (NSColor.black, 1.0)] {
+                    colour.setStroke()
+                    for path in [shape, mark] {
+                        path.lineWidth = width
+                        if tip == .spray && path === shape {
+                            path.setLineDash(width > 1 ? [] : [2, 2], count: width > 1 ? 0 : 2, phase: 0)
+                        }
+                        path.stroke()
+                    }
+                }
+                return true
+            }
+            cursor = NSCursor(image: image, hotSpot: NSPoint(x: side / 2, y: side / 2))
+        }
+        cachedTipCursor = (key, cursor)
+        return cursor
     }
 
     override func updateTrackingAreas() {
