@@ -1,5 +1,6 @@
 import AppKit
 import DaubCore
+import SwiftUI
 
 /// End-to-end checks that drive the real app through the real clipboard, because the
 /// paste path lives in the app target where `swift test` cannot reach it.
@@ -30,6 +31,8 @@ enum SelfTest {
             note("FAIL  no editor or canvas")
             exit(1)
         }
+
+        checkSettingsSurviveRelaunch()
 
         // 1. A whole picture imported from the clipboard sizes the canvas to it.
         put(image(width: 2400, height: 1600, colour: .systemBlue))
@@ -428,6 +431,53 @@ enum SelfTest {
         NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
                          windowNumber: 0, context: nil, characters: "\u{1b}",
                          charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+    }
+
+    /// Every toolbox setting, changed through the editor the way the UI changes it, comes
+    /// back in a second editor reading the same store — the next launch, crash or not.
+    private static func checkSettingsSurviveRelaunch() {
+        let suite = "Daub.selftest.settings"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let first = Editor(settings: ToolSettingsStore(defaults: defaults), becomesCurrent: false)
+        first.tool = .ellipse
+        first.primary = Color(.sRGB, red: 0.2, green: 0.4, blue: 0.6)
+        first.secondary = Color(.sRGB, red: 0.9, green: 0.1, blue: 0.3)
+        first.strokeWidth = 21
+        first.pencilSize = 4
+        first.eraserSize = 44
+        first.sprayRadius = 30
+        first.sprayDensity = 55
+        first.tolerance = 37
+        first.brushOpacity = 0.35
+        first.shapeStyle = .filled
+        first.antialias = false
+        first.fontSize = 64
+        first.fontName = "Menlo"
+        first.showGrid = false
+        let expected = first.toolSettings
+
+        let next = Editor(settings: ToolSettingsStore(defaults: UserDefaults(suiteName: suite)!),
+                          becomesCurrent: false)
+        // SwiftUI keeps colours in single precision, so they come back within a hair of
+        // what was saved, never exactly; every other setting must match exactly.
+        var restored = next.toolSettings
+        let close = zip(restored.primary + restored.secondary, expected.primary + expected.secondary)
+            .allSatisfy { abs($0 - $1) < 1e-4 }
+        restored.primary = expected.primary
+        restored.secondary = expected.secondary
+        check(close && restored == expected,
+              "every tool setting comes back on the next launch",
+              "saved \(expected), restored \(next.toolSettings)")
+        check(next.tool == .ellipse && next.brushOpacity == 0.35,
+              "the last tool and its opacity are the ones restored",
+              "tool \(next.tool), opacity \(next.brushOpacity)")
+
+        let fresh = Editor(settings: nil, becomesCurrent: false)
+        check(fresh.toolSettings == ToolSettings(),
+              "an editor with no store starts from the defaults", "got \(fresh.toolSettings)")
     }
 
     private static func check(_ passed: Bool, _ what: String, _ detail: @autoclosure () -> String) {

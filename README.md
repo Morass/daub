@@ -64,6 +64,13 @@ canvas, the canvas grows to hold it rather than cropping it.
 
 **Save** with ⌘S. PNG, JPEG or TIFF, decided by the extension you type.
 
+**Your toolbox is remembered.** The selected tool, both colours, every size, opacity,
+tolerance, shape style, *Smooth edges*, the font and the pixel grid come back as you left
+them the next time Daub starts — even after a crash or a force-quit, because each change is
+stored the moment you make it. They live in Daub's preferences
+(`~/Library/Preferences/com.morass.daub.plist`); `defaults delete com.morass.daub` puts
+everything back to the defaults. The picture itself is not kept: save it.
+
 ---
 
 ## The tools

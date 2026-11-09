@@ -45,14 +45,14 @@ struct Toolbox: View {
 
         switch editor.tool.sizeKnob {
         case .pencil:
-            LabelledSlider(title: "Size", value: $editor.pencilSize, range: 1...16, unit: "px")
+            LabelledSlider(title: "Size", value: $editor.pencilSize, range: ToolSettings.pencilRange, unit: "px")
         case .stroke:
-            LabelledSlider(title: "Width", value: $editor.strokeWidth, range: 1...48, unit: "px")
+            LabelledSlider(title: "Width", value: $editor.strokeWidth, range: ToolSettings.strokeRange, unit: "px")
         case .eraser:
-            LabelledSlider(title: "Size", value: $editor.eraserSize, range: 1...96, unit: "px")
+            LabelledSlider(title: "Size", value: $editor.eraserSize, range: ToolSettings.eraserRange, unit: "px")
         case .spray:
-            LabelledSlider(title: "Radius", value: $editor.sprayRadius, range: 2...80, unit: "px")
-            LabelledSlider(title: "Flow", value: $editor.sprayDensity, range: 1...80, unit: "")
+            LabelledSlider(title: "Radius", value: $editor.sprayRadius, range: ToolSettings.sprayRadiusRange, unit: "px")
+            LabelledSlider(title: "Flow", value: $editor.sprayDensity, range: ToolSettings.sprayDensityRange, unit: "")
         case .none:
             EmptyView()
         }
@@ -69,11 +69,11 @@ struct Toolbox: View {
         }
 
         if editor.tool == .fill {
-            LabelledSlider(title: "Tolerance", value: $editor.tolerance, range: 0...128, unit: "")
+            LabelledSlider(title: "Tolerance", value: $editor.tolerance, range: ToolSettings.toleranceRange, unit: "")
         }
 
         if editor.tool == .text {
-            LabelledSlider(title: "Size", value: $editor.fontSize, range: 8...144, unit: "pt")
+            LabelledSlider(title: "Size", value: $editor.fontSize, range: ToolSettings.fontSizeRange, unit: "pt")
             Picker("Font", selection: $editor.fontName) {
                 ForEach(Toolbox.fonts, id: \.self) { Text($0).font(.caption) }
             }
@@ -102,7 +102,7 @@ struct Toolbox: View {
         }
 
         if editor.tool == .colourReplace {
-            LabelledSlider(title: "Tolerance", value: $editor.tolerance, range: 0...128, unit: "")
+            LabelledSlider(title: "Tolerance", value: $editor.tolerance, range: ToolSettings.toleranceRange, unit: "")
             Text("Click a colour to swap every pixel of it for the foreground colour; "
                  + "right-click swaps to the background one. Select an area first to limit "
                  + "the swap to it.")
@@ -173,7 +173,7 @@ struct PercentSlider: View {
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
-            Slider(value: $value, in: 0.05...1).controlSize(.small)
+            Slider(value: $value, in: ToolSettings.opacityRange).controlSize(.small)
         }
     }
 }

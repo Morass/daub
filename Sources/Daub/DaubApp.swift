@@ -1,10 +1,17 @@
 import AppKit
+import DaubCore
 import SwiftUI
 
 @main
 struct DaubApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @StateObject private var editor = Editor()
+    @StateObject private var editor = Editor(settings: DaubApp.settingsStore)
+
+    private static var settingsStore: ToolSettingsStore? {
+        let env = ProcessInfo.processInfo.environment
+        if env["DAUB_SELFTEST"] != nil || env["DAUB_SCREENSHOT"] != nil { return nil }
+        return ToolSettingsStore(defaults: .standard)
+    }
 
     var body: some Scene {
         Window("Daub", id: "canvas") {

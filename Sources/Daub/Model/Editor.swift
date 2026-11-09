@@ -11,25 +11,25 @@ final class Editor: ObservableObject {
     private(set) static weak var current: Editor?
     @Published private(set) var document = PaintDocument()
 
-    // Tool state
-    @Published var tool: Tool = .pencil { didSet { toolDidChange(from: oldValue) } }
-    @Published var primary: Color = .black
-    @Published var secondary: Color = .white
-    @Published var strokeWidth: Double = 3
-    @Published var pencilSize: Double = 1
-    @Published var eraserSize: Double = 12
-    @Published var sprayRadius: Double = 14
-    @Published var sprayDensity: Double = 20
-    @Published var tolerance: Double = 0
-    @Published var brushOpacity: Double = 1
-    @Published var shapeStyle: ShapeFill = .outline
-    @Published var antialias = true
-    @Published var fontSize: Double = 28
-    @Published var fontName: String = "Helvetica Neue"
+    // Tool state. Every change is written straight to the settings store.
+    @Published var tool: Tool = .pencil { didSet { toolDidChange(from: oldValue); persist() } }
+    @Published var primary: Color = .black { didSet { persist() } }
+    @Published var secondary: Color = .white { didSet { persist() } }
+    @Published var strokeWidth: Double = 3 { didSet { persist() } }
+    @Published var pencilSize: Double = 1 { didSet { persist() } }
+    @Published var eraserSize: Double = 12 { didSet { persist() } }
+    @Published var sprayRadius: Double = 14 { didSet { persist() } }
+    @Published var sprayDensity: Double = 20 { didSet { persist() } }
+    @Published var tolerance: Double = 0 { didSet { persist() } }
+    @Published var brushOpacity: Double = 1 { didSet { persist() } }
+    @Published var shapeStyle: ShapeFill = .outline { didSet { persist() } }
+    @Published var antialias = true { didSet { persist() } }
+    @Published var fontSize: Double = 28 { didSet { persist() } }
+    @Published var fontName: String = "Helvetica Neue" { didSet { persist() } }
 
     // View state
     @Published var zoom: CGFloat = 1
-    @Published var showGrid = true
+    @Published var showGrid = true { didSet { persist() } }
     @Published var showRulers = false
 
     // Derived / status
@@ -42,7 +42,15 @@ final class Editor: ObservableObject {
     weak var canvas: CanvasView?
     private var previousTool: Tool = .pencil
 
-    init() { Editor.current = self }
+    private let settingsStore: ToolSettingsStore?
+
+    /// `settings: nil` remembers nothing, for the README capture and the self-test, which
+    /// must neither read nor overwrite the user's toolbox.
+    init(settings: ToolSettingsStore?, becomesCurrent: Bool = true) {
+        settingsStore = settings
+        if let saved = settings?.load() { apply(saved) }
+        if becomesCurrent { Editor.current = self }
+    }
 
     var primaryNS: NSColor { NSColor(primary) }
     var secondaryNS: NSColor { NSColor(secondary) }
@@ -51,6 +59,59 @@ final class Editor: ObservableObject {
     var canRedo: Bool { document.history.canRedo }
     var canvasSize: CGSize { document.size }
     var windowTitle: String { document.displayName + (isDirty ? " — Edited" : "") }
+
+    // MARK: - Remembered settings
+
+    var toolSettings: ToolSettings {
+        var s = ToolSettings()
+        s.tool = tool.rawValue
+        s.primary = Self.components(primary)
+        s.secondary = Self.components(secondary)
+        s.strokeWidth = strokeWidth
+        s.pencilSize = pencilSize
+        s.eraserSize = eraserSize
+        s.sprayRadius = sprayRadius
+        s.sprayDensity = sprayDensity
+        s.tolerance = tolerance
+        s.brushOpacity = brushOpacity
+        s.shapeStyle = shapeStyle.rawValue
+        s.antialias = antialias
+        s.fontSize = fontSize
+        s.fontName = fontName
+        s.showGrid = showGrid
+        return s
+    }
+
+    /// Only called from `init`, where property observers do not fire, so restoring does
+    /// not write the settings straight back.
+    private func apply(_ s: ToolSettings) {
+        if let t = Tool(rawValue: s.tool) { tool = t }
+        primary = Self.colour(s.primary)
+        secondary = Self.colour(s.secondary)
+        strokeWidth = s.strokeWidth
+        pencilSize = s.pencilSize
+        eraserSize = s.eraserSize
+        sprayRadius = s.sprayRadius
+        sprayDensity = s.sprayDensity
+        tolerance = s.tolerance
+        brushOpacity = s.brushOpacity
+        if let f = ShapeFill(rawValue: s.shapeStyle) { shapeStyle = f }
+        antialias = s.antialias
+        fontSize = s.fontSize
+        fontName = s.fontName
+        showGrid = s.showGrid
+    }
+
+    private func persist() { settingsStore?.save(toolSettings) }
+
+    private static func components(_ c: Color) -> [Double] {
+        let ns = NSColor(c).usingColorSpace(.sRGB) ?? .black
+        return [ns.redComponent, ns.greenComponent, ns.blueComponent, ns.alphaComponent].map(Double.init)
+    }
+
+    private static func colour(_ c: [Double]) -> Color {
+        Color(.sRGB, red: c[0], green: c[1], blue: c[2], opacity: c[3])
+    }
 
     // MARK: - Commit boundary
 
