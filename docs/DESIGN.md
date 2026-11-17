@@ -103,7 +103,7 @@ rectangle; making it a mask touches lift, move, paste, crop and every clip in th
 
 **Also absent:** smudge, blur and sharpen brushes; the curve and polygon tools; free
 rotate and scale of a selection; levels and curves adjustments; brush shapes beyond round
-and square; multi-line text boxes (the text tool is a single line); multiple windows and
+and square; editing text after it is stamped; multiple windows and
 documents; document icons for file types.
 
 ## Fixed: the canvas redrew as it was before a whole-canvas operation

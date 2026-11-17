@@ -51,7 +51,7 @@ enum Screenshot {
         window.center()
     }
 
-    private static func capture(to url: URL) {
+    static func capture(to url: URL) {
         guard let window = canvasWindow(),
               // The theme frame, not the content view: that is what carries the title bar.
               let root = window.contentView?.superview ?? window.contentView

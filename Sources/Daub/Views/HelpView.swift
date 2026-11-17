@@ -171,7 +171,7 @@ struct HelpView: View {
         ("⇧-drag", "Constrain a line to 45°, a rectangle to a square, an ellipse to a circle"),
         ("⌫", "Delete the selected pixels"),
         ("Escape", "Drop a floating selection back where it came from, or cancel typing"),
-        ("⏎", "Stamp the text you are typing into the picture"),
+        ("⌘⏎", "Stamp the text you are typing into the picture (⏎ alone starts a new line)"),
     ]
 
     private struct Recipe { let title: String; let body: String }

@@ -53,10 +53,14 @@ final class Editor: ObservableObject {
     }
 
     var primaryNS: NSColor { NSColor(primary) }
+    var textFont: NSFont {
+        NSFont(name: fontName, size: fontSize) ?? .systemFont(ofSize: fontSize)
+    }
     var secondaryNS: NSColor { NSColor(secondary) }
 
-    var canUndo: Bool { document.history.canUndo }
-    var canRedo: Bool { document.history.canRedo }
+    /// An open text box counts: ⌘Z takes back its typing, and then the box itself.
+    var canUndo: Bool { document.history.canUndo || canvas?.textBox != nil }
+    var canRedo: Bool { document.history.canRedo || canvas?.textBox?.canRedoTyping == true }
     var canvasSize: CGSize { document.size }
     var windowTitle: String { document.displayName + (isDirty ? " — Edited" : "") }
 
@@ -123,6 +127,9 @@ final class Editor: ObservableObject {
         document.finishStep()
         revision &+= 1
     }
+
+    /// Typing changes what Undo and Redo would do without being a committed step.
+    func textDidChange() { revision &+= 1 }
 
     private func toolDidChange(from old: Tool) {
         guard old != tool else { return }
@@ -222,6 +229,7 @@ final class Editor: ObservableObject {
 
     private func write(to url: URL) -> Bool {
         canvas?.endActiveDrag()
+        canvas?.commitText()
         canvas?.commitFloatingSelection()
         // JPEG has no alpha channel: a transparent canvas written straight out comes back
         // with black where the holes were, so flatten onto white first.
@@ -255,6 +263,9 @@ final class Editor: ObservableObject {
     func confirmDiscardIfNeeded() -> Bool {
         // Do NOT commit the floating selection here: the user may still press Cancel, and
         // a committed float cannot be picked back up to carry on moving it.
+        // Text still being typed is different: it is not in the picture at all until it is
+        // stamped, so the prompt below could not see it otherwise.
+        canvas?.commitText()
         guard document.isDirty || canvas?.hasFloatingSelection == true else { return true }
         let alert = NSAlert()
         alert.messageText = "Save changes to “\(document.displayName)”?"
@@ -286,11 +297,23 @@ final class Editor: ObservableObject {
     /// the step being undone already holds the "before" snapshot, so ⌘Z still lands where
     /// the user expects — and ⇧⌘Z now returns the paste instead of an empty canvas.
     func undo() {
+        if let box = canvas?.textBox {
+            if box.canUndoTyping { box.undoTyping() } else { canvas?.cancelText() }
+            textDidChange()
+            return
+        }
         canvas?.endActiveDrag()
         canvas?.commitFloatingSelection()
         if document.undo() { canvas?.documentDidChange(); didCommit() }
     }
-    func redo() { if document.redo() { canvas?.documentDidChange(); didCommit() } }
+    func redo() {
+        // Committing the box to reach the picture's redo would clear that redo branch.
+        if let box = canvas?.textBox {
+            if box.canRedoTyping { box.redoTyping(); textDidChange() }
+            return
+        }
+        if document.redo() { canvas?.documentDidChange(); didCommit() }
+    }
 
     // Cut/Copy/Paste/Select All are intentionally absent: they travel the responder
     // chain to whichever view has focus, so the text tool keeps its own clipboard.
@@ -300,6 +323,7 @@ final class Editor: ObservableObject {
     // MARK: - Image
 
     func apply(_ transform: PaintDocument.Transform) {
+        canvas?.commitText()
         canvas?.commitFloatingSelection()
         document.apply(transform)
         canvas?.documentDidChange()
@@ -310,6 +334,7 @@ final class Editor: ObservableObject {
     /// real transparency. Uses the fill tolerance, which is the knob people already
     /// understand for "near enough to this colour".
     func makeBackgroundTransparent() {
+        canvas?.commitText()
         let region = canvas?.currentSelection
         canvas?.commitFloatingSelection()
         let changed = document.makeColourTransparent(secondaryNS, tolerance: Int(tolerance),
@@ -333,6 +358,7 @@ final class Editor: ObservableObject {
     }
 
     func replaceColourUnderBackground(with replacement: NSColor) {
+        canvas?.commitText()
         let region = canvas?.currentSelection
         canvas?.commitFloatingSelection()
         document.replaceColour(secondaryNS, with: replacement, tolerance: Int(tolerance),
@@ -342,6 +368,7 @@ final class Editor: ObservableObject {
     }
 
     func cropToSelection() {
+        canvas?.commitText()
         guard let rect = canvas?.currentSelection else { return }
         canvas?.commitFloatingSelection()
         document.crop(to: rect)
@@ -350,6 +377,7 @@ final class Editor: ObservableObject {
     }
 
     func clearCanvas() {
+        canvas?.commitText()
         canvas?.deselect()
         document.clear(with: secondaryNS)
         canvas?.documentDidChange()
@@ -357,6 +385,7 @@ final class Editor: ObservableObject {
     }
 
     func resizeCanvas(width: Int, height: Int, scaleContents: Bool) {
+        canvas?.commitText()
         guard canvasIsAllowed(width: width, height: height) else { return }
         canvas?.commitFloatingSelection()
         if scaleContents {

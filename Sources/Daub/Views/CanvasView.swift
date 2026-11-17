@@ -19,6 +19,7 @@ final class CanvasView: NSView {
         case spray(point: CGPoint)
         case shape(start: CGPoint, current: CGPoint)
         case marquee(start: CGPoint, current: CGPoint)
+        case textBox(start: CGPoint, current: CGPoint)
         case moveSelection(grab: CGPoint, origin: CGPoint)
     }
 
@@ -41,7 +42,10 @@ final class CanvasView: NSView {
     private var antsTimer: Timer?
     private var antsPhase: CGFloat = 0
     private var rng = SystemRandomNumberGenerator()
-    private var textField: NSTextField?
+    private(set) var textBox: TextBoxView?
+    /// The editor's text style as the open box last saw it, so a change made in the sidebar
+    /// while typing can be told apart from no change at all.
+    private var textStyleSeen: (name: String, size: Double, colour: NSColor)?
 
     /// Clone stamp: ⌥-click sets the source. The snapshot is taken at mouse-down so the
     /// tool copies the picture as it was, not the paint it is laying down — otherwise a
@@ -157,6 +161,8 @@ final class CanvasView: NSView {
 
         if case let .marquee(start, current) = drag {
             drawAnts(ctx, rect: CGRect.normalised(from: start, to: current))
+        } else if case let .textBox(start, current) = drag {
+            drawAnts(ctx, rect: CGRect.normalised(from: start, to: current))
         } else if let rect = floating?.rect ?? selection {
             drawAnts(ctx, rect: rect)
         }
@@ -245,6 +251,9 @@ final class CanvasView: NSView {
 
     private func begin(_ event: NSEvent, secondary: Bool) {
         window?.makeFirstResponder(self)
+        // A click outside an open text box finishes it — and that is all the click does,
+        // so placing the text never also opens a second box where you clicked.
+        let finishedText = textBox.map { !$0.isBlank } ?? false
         commitText()
         let p = canvasPoint(event)
         dragIsSecondary = secondary
@@ -305,8 +314,9 @@ final class CanvasView: NSView {
             editor.revertToPreviousTool()
 
         case .text:
+            guard !finishedText else { return }
             commitFloatingSelection()
-            beginText(at: p)
+            drag = .textBox(start: p, current: p)
 
         case .gradient, .line, .rectangle, .roundedRectangle, .ellipse:
             commitFloatingSelection()
@@ -383,6 +393,11 @@ final class CanvasView: NSView {
             invalidate(canvasRect: old.union(CGRect.normalised(from: start, to: end))
                 .insetBy(dx: -pad, dy: -pad))
 
+        case .textBox(let start, let previous):
+            drag = .textBox(start: start, current: p)
+            invalidate(canvasRect: CGRect.normalised(from: start, to: previous)
+                .union(CGRect.normalised(from: start, to: p)))
+
         case .marquee(let start, _):
             let old = CGRect.normalised(from: start, to: p)
             drag = .marquee(start: start, current: p)
@@ -455,6 +470,11 @@ final class CanvasView: NSView {
         case .moveSelection:
             drag = .none
             editor.didCommit()
+
+        case .textBox(let start, _):
+            drag = .none
+            invalidate(canvasRect: CGRect.normalised(from: start, to: p))
+            beginText(from: start, to: p)
 
         case .none:
             break
@@ -778,70 +798,85 @@ final class CanvasView: NSView {
 
     // MARK: - Text
 
-    private func beginText(at p: CGPoint) {
-        let field = NSTextField(frame: .zero)
-        field.isBordered = false
-        field.drawsBackground = false
-        field.focusRingType = .none
-        field.font = NSFont(name: editor.fontName, size: editor.fontSize * zoom)
-            ?? .systemFont(ofSize: editor.fontSize * zoom)
-        field.textColor = editor.primaryNS
-        field.placeholderString = "Type, then ⏎"
-        field.delegate = self
-        let height = (field.font?.ascender ?? 0) - (field.font?.descender ?? 0) + 6
-        field.frame = CGRect(x: p.x * zoom, y: p.y * zoom, width: 260, height: height)
-        addSubview(field)
-        window?.makeFirstResponder(field)
-        textField = field
+    /// A click opens a free line; a drag opens a box whose width the lines wrap at.
+    func beginText(from start: CGPoint, to end: CGPoint) {
+        cancelText()
+        let font = editor.textFont
+        let rect = CGRect.normalised(from: start, to: end)
+        let dragged = rect.width * zoom >= 6
+        let box: TextBoxView
+        if dragged {
+            box = TextBoxView(anchor: CGPoint(x: rect.minX.rounded(), y: rect.maxY.rounded()),
+                              wrapWidth: rect.width.rounded(), minimumHeight: rect.height.rounded(),
+                              zoom: zoom, font: font, colour: editor.primaryNS)
+        } else {
+            // The I-beam's middle is where the click was: centre the first line on it.
+            let line = ceil(font.ascender - font.descender + font.leading)
+            box = TextBoxView(anchor: CGPoint(x: start.x.rounded(), y: (start.y + line / 2).rounded()),
+                              wrapWidth: nil, minimumHeight: 0,
+                              zoom: zoom, font: font, colour: editor.primaryNS)
+        }
+        box.canvas = self
+        addSubview(box)
+        textBox = box
+        textStyleSeen = (editor.fontName, editor.fontSize, editor.primaryNS)
+        window?.makeFirstResponder(box.textView)
+        editor.textDidChange()
     }
 
-    /// Bake the overlay text into the bitmap at the point it was typed.
+    /// Stamp the open text box into the picture, exactly as it is laid out on screen.
     func commitText() {
-        guard let field = textField else { return }
-        textField = nil
-        defer { field.removeFromSuperview(); window?.makeFirstResponder(self) }
-        let string = field.stringValue
-        guard !string.isEmpty else { return }
-
+        guard let box = textBox else { return }
+        box.finishComposing()
+        textBox = nil
+        textStyleSeen = nil
+        defer {
+            box.removeFromSuperview()
+            if window?.firstResponder == nil || window?.firstResponder === box.textView {
+                window?.makeFirstResponder(self)
+            }
+            editor.textDidChange()
+        }
+        guard !box.isBlank else { return }
         doc.checkpoint()
-        let font = NSFont(name: editor.fontName, size: editor.fontSize) ?? .systemFont(ofSize: editor.fontSize)
-        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: editor.primaryNS]
-
-        // The cell insets its text inside the field's frame, and reports that rect in its
-        // own flipped space. Aligning the two bounding boxes is the difference between
-        // text that lands where it was typed and text a line-height off.
-        var textRect = field.bounds
-        if let cell = field.cell { textRect = cell.titleRect(forBounds: field.bounds) }
-        let insetX = textRect.minX
-        let insetYFromBottom = field.bounds.height - textRect.maxY
-        let origin = CGPoint(x: (field.frame.minX + insetX) / zoom,
-                             y: (field.frame.minY + insetYFromBottom) / zoom)
-
-        // What the glyphs actually cover, not what the line box says: stacked combining
-        // marks, emoji and swash fallbacks all paint outside the typographic box, and a
-        // rectangle that is too small here is text that Undo cannot fully remove.
-        // `.usesDeviceMetrics` asks for the union of the glyph *image* bounds.
-        let attributed = NSAttributedString(string: string, attributes: attributes)
-        let box = (string as NSString).size(withAttributes: attributes)
-        let unbounded = CGSize(width: CGFloat.greatestFiniteMagnitude,
-                               height: CGFloat.greatestFiniteMagnitude)
-        let ink = attributed.boundingRect(with: unbounded,
-                                          options: [.usesDeviceMetrics, .usesLineFragmentOrigin])
-        let covered = CGRect(x: origin.x + min(0, ink.minX),
-                             y: origin.y + min(0, ink.minY),
-                             width: max(box.width, ink.maxX),
-                             height: max(box.height, ink.maxY))
-        let slack = editor.fontSize + 8
-        doc.willTouch(covered.insetBy(dx: -slack, dy: -slack))
-
-        let ns = NSGraphicsContext(cgContext: doc.context, flipped: false)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = ns
-        (string as NSString).draw(at: origin, withAttributes: attributes)
-        NSGraphicsContext.restoreGraphicsState()
-
+        doc.willTouch(box.coveredRect() ?? doc.bounds)
+        box.render(into: doc.context)
         needsDisplay = true
         editor.didCommit()
+    }
+
+    /// Throw the open text box away without touching the picture.
+    func cancelText() {
+        guard let box = textBox else { return }
+        textBox = nil
+        textStyleSeen = nil
+        box.removeFromSuperview()
+        if window?.firstResponder == nil || window?.firstResponder === box.textView {
+            window?.makeFirstResponder(self)
+        }
+        editor.textDidChange()
+    }
+
+    func textBoxDidChange() { editor.textDidChange() }
+
+    /// Called on every editor change: a font, size or colour picked in the sidebar while a
+    /// box is open restyles that box (its selection, or all of it) straight away.
+    func syncTextStyle() {
+        guard let box = textBox, let seen = textStyleSeen else { return }
+        // A click on a sidebar control can leave the window with no text focus at all;
+        // keys typed next belong in the box, not in a beep.
+        if let window, window.firstResponder === window || window.firstResponder == nil {
+            window.makeFirstResponder(box.textView)
+        }
+        let colour = editor.primaryNS
+        let name = editor.fontName == seen.name ? nil : editor.fontName
+        let size = editor.fontSize == seen.size ? nil : CGFloat(editor.fontSize)
+        let newColour = colour.isEqual(seen.colour) ? nil : colour
+        guard name != nil || size != nil || newColour != nil else { return }
+        textStyleSeen = (editor.fontName, editor.fontSize, colour)
+        box.apply(fontName: name, fontSize: size, colour: newColour)
+        // Picking the colour moved the focus to the sidebar; typing should carry on.
+        if !(window?.firstResponder is NSText) { window?.makeFirstResponder(box.textView) }
     }
 
     // MARK: - Keyboard
@@ -923,6 +958,7 @@ final class CanvasView: NSView {
 
     func documentDidChange() {
         endActiveDrag()
+        cancelText()
         floating = nil
         selection = nil
         stopAnts()
@@ -934,6 +970,7 @@ final class CanvasView: NSView {
     func applyZoom() {
         let size = scaledSize
         setFrameSize(size)
+        textBox?.setZoom(zoom)
         (superview as? CanvasContainerView)?.refreshLayout()
         needsDisplay = true
     }
@@ -1035,29 +1072,6 @@ final class CanvasView: NSView {
         let next = editor.zoom * (1 + event.magnification)
         editor.zoom = max(0.25, min(32, next))
     }
-}
-
-extension CanvasView: NSTextFieldDelegate {
-    /// Return commits the text. `controlTextDidEndEditing` alone is not enough — the field
-    /// does not always end editing on Return inside a plain NSView — and the action/target
-    /// route it replaced fired inconsistently, which is why typed text only appeared once
-    /// the tool was switched.
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        switch selector {
-        case #selector(NSResponder.insertNewline(_:)):
-            commitText()
-            return true
-        case #selector(NSResponder.cancelOperation(_:)):
-            textField?.removeFromSuperview()
-            textField = nil
-            window?.makeFirstResponder(self)
-            return true
-        default:
-            return false
-        }
-    }
-
-    func controlTextDidEndEditing(_ obj: Notification) { commitText() }
 }
 
 extension CGRect {

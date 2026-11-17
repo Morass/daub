@@ -118,6 +118,7 @@ struct CanvasHost: NSViewRepresentable {
         container.refreshLayout()
         container.canvasView.needsDisplay = true
         container.canvasView.refreshCursorIfNeeded()
+        container.canvasView.syncTextStyle()
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }

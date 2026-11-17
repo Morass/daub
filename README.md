@@ -86,7 +86,7 @@ keystroke from the text tool.
 | ⌫ | **Eraser** | `E` | Paints the background colour — or rubs through to transparency on a canvas that has alpha (see below). |
 | 💧 | **Fill** | `F` | Flood fill with a tolerance slider for anti-aliased or JPEG-noisy edges. |
 | 💉 | **Pick Colour** | `I` | Click to sample; snaps back to the tool you were using. Right-click samples into the background. |
-| T | **Text** | `T` | Click, type, press ⏎ to bake it in. Escape cancels. Font and size in the sidebar. |
+| T | **Text** | `T` | Click for a line that runs as long as you type, or drag a box and the lines wrap at its width. ⏎ starts a new line; ⌘⏎ or a click outside stamps it in; Escape cancels. Drag the box's border to move it, its side handles to change the width. Colour, font and size picked while typing apply at once — to the selected words if you select some, otherwise to the whole box. |
 | ⧉ | **Clone Stamp** | `K` | ⌥-click sets the source, then drag to paint from it. Copies the picture as it was at the start of the stroke, so crossing your own source never smears. |
 | 🎨 | **Replace Colour** | `G` | Click a colour: every pixel of it becomes the foreground colour (right-click: the background colour). Tolerance widens the match; a selection limits where it applies. See *Swapping one colour for another*. |
 | ▨ | **Gradient** | `Y` | Drag to set direction and length: foreground → background. Clipped to the selection if there is one. |
@@ -261,7 +261,7 @@ colour. Every pixel of it in the picture changes at once.
 
 **A quick title card**
 ⇧⌘N for a transparent canvas → **Gradient** (`Y`), drag top-to-bottom → **Text** (`T`),
-size 72, click, type, ⏎ → ⌘S as PNG.
+size 72, click, type, ⌘⏎ → ⌘S as PNG.
 
 **Pixel art**
 ⌘R to set a small canvas (say 64×64) → ⌘0 to fit → **Pencil** at size 1 → the grid appears

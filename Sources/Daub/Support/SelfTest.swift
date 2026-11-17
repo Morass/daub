@@ -181,20 +181,25 @@ enum SelfTest {
         check(PaintDocument.takeVerificationFailures().isEmpty,
               "undo puts back every pixel the clone stamp covered", "see above")
 
-        // Text: the field is a real subview, so fill it in and commit it. The second string
+        // Text: the box is a real subview, so type into it and stamp it. The second string
         // is a tower of combining marks, which paints far outside its own line box — the
         // case that proves the capture follows the glyphs and not the typographic metrics.
         for (name, string) in [("text", "Daub"),
                                ("text that paints outside its line box",
-                                "x" + String(repeating: "\u{030D}", count: 30))] {
+                                "x" + String(repeating: "\u{030D}", count: 30)),
+                               ("wrapped text in a dragged box", "a box of words that wraps over lines")] {
             reset(editor, width: 400, height: 300)
             editor.tool = .text
-            click(canvas, at: CGPoint(x: 60, y: 120))
-            guard let field = canvas.subviews.compactMap({ $0 as? NSTextField }).first else {
-                check(false, "the text tool opens a field to type in", "no field appeared")
+            if name.hasPrefix("wrapped") {
+                drag(canvas, from: CGPoint(x: 40, y: 250), to: CGPoint(x: 160, y: 200))
+            } else {
+                click(canvas, at: CGPoint(x: 60, y: 120))
+            }
+            guard let box = canvas.textBox else {
+                check(false, "the text tool opens a box to type in", "no box appeared")
                 continue
             }
-            field.stringValue = string
+            box.textView.insertText(string, replacementRange: box.textView.selectedRange())
             canvas.commitText()
             editor.undo()
             check(PaintDocument.takeVerificationFailures().isEmpty,
@@ -353,6 +358,8 @@ enum SelfTest {
             }
         }
 
+        checkText(editor, canvas)
+
         FileHandle.standardError.write(Data("selftest: \(failures == 0 ? "all checks passed" : "\(failures) failed")\n".utf8))
         exit(failures == 0 ? 0 : 1)
     }
@@ -394,6 +401,273 @@ enum SelfTest {
         drag(canvas, from: CGPoint(x: 30, y: 30), to: CGPoint(x: 340, y: 240))
         editor.document.isDirty = false
         editor.isDirty = false
+    }
+
+    // MARK: - Text tool
+
+    private static func typeText(_ canvas: CanvasView, _ string: String) {
+        guard let tv = canvas.textBox?.textView else { return }
+        tv.insertText(string, replacementRange: tv.selectedRange())
+    }
+
+    /// The box around every pixel that is not the white background, or nil.
+    private static func ink(_ doc: PaintDocument) -> CGRect? {
+        var minX = Int.max, minY = Int.max, maxX = -1, maxY = -1
+        for y in 0..<doc.height {
+            for x in 0..<doc.width {
+                let p = doc.bitmap.pixel(x: x, y: y)
+                if p.r < 200 || p.g < 200 || p.b < 200 {
+                    minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+                }
+            }
+        }
+        return maxX < 0 ? nil : CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
+    }
+
+    private static func pixels(_ doc: PaintDocument) -> Data {
+        guard let image = doc.bitmap.makeImage(), let data = image.dataProvider?.data else { return Data() }
+        return data as Data
+    }
+
+    private static func commandReturn(_ canvas: CanvasView) -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command], timestamp: 0,
+                         windowNumber: canvas.window?.windowNumber ?? 0, context: nil,
+                         characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false,
+                         keyCode: 36)!
+    }
+
+    private static func checkText(_ editor: Editor, _ canvas: CanvasView) {
+        let sentence = "The quick brown fox jumps over the lazy dog and keeps on running"
+        editor.zoom = 1
+        editor.fontName = "Helvetica Neue"
+        editor.fontSize = 28
+        editor.primary = .black
+        let line = editor.textFont.ascender - editor.textFont.descender + editor.textFont.leading
+
+        // A click gives one line that runs as long as you type and never breaks by itself.
+        reset(editor, width: 1400, height: 300)
+        editor.tool = .text
+        click(canvas, at: CGPoint(x: 20, y: 150))
+        typeText(canvas, sentence)
+        let free = canvas.textBox?.textRect ?? .zero
+        check(free.height < line * 1.5 && free.width > 600,
+              "a clicked text line does not wrap by itself, however long it gets",
+              "box \(free), line height \(line)")
+        canvas.commitText()
+        let freeInk = ink(editor.document)
+        check(freeInk.map { $0.height < line * 1.5 && $0.width > 600 } == true,
+              "and it is stamped as the one line it was typed on", "ink \(String(describing: freeInk))")
+        check(freeInk.map { abs($0.midY - 150) < line * 0.6 } == true,
+              "the first line sits on the point that was clicked", "ink \(String(describing: freeInk))")
+
+        // A drag sets where the lines end: they wrap at its width, on screen and in the picture.
+        reset(editor, width: 600, height: 400)
+        editor.tool = .text
+        drag(canvas, from: CGPoint(x: 40, y: 360), to: CGPoint(x: 240, y: 300))
+        typeText(canvas, sentence)
+        let boxed = canvas.textBox?.textRect ?? .zero
+        check(boxed.width == 200 && boxed.height > line * 2.5,
+              "a dragged text box wraps its lines at the width it was dragged to", "box \(boxed)")
+        canvas.commitText()
+        let boxedInk = ink(editor.document)
+        check(boxedInk.map { $0.minX >= 38 && $0.maxX <= 242 && $0.maxY <= 362 && $0.height > line * 2.5 } == true,
+              "and the stamped text stays inside that width, on the same lines",
+              "ink \(String(describing: boxedInk))")
+
+        // Dragging the box's side re-wraps it.
+        reset(editor, width: 900, height: 400)
+        editor.tool = .text
+        drag(canvas, from: CGPoint(x: 40, y: 360), to: CGPoint(x: 240, y: 300))
+        typeText(canvas, sentence)
+        if let box = canvas.textBox {
+            let before = box.textRect
+            let edge = box.convert(CGPoint(x: box.bounds.maxX - 3, y: box.bounds.midY), to: nil)
+            let move = { (type: NSEvent.EventType, dx: CGFloat) in
+                NSEvent.mouseEvent(with: type, location: CGPoint(x: edge.x + dx, y: edge.y), modifierFlags: [],
+                                   timestamp: 0, windowNumber: canvas.window?.windowNumber ?? 0,
+                                   context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            }
+            box.mouseDown(with: move(.leftMouseDown, 0))
+            box.mouseDragged(with: move(.leftMouseDragged, 200))
+            box.mouseUp(with: move(.leftMouseUp, 400))
+            let after = box.textRect
+            check(after.width == 600 && after.height < before.height && after.minX == before.minX
+                    && after.maxY == before.maxY,
+                  "dragging the side of a text box widens it and re-wraps the text",
+                  "before \(before), after \(after)")
+        } else {
+            check(false, "dragging the side of a text box widens it", "no box")
+        }
+        canvas.cancelText()
+
+        // Return is a new line, not the end of the text; ⌘Return stamps it.
+        reset(editor, width: 600, height: 400)
+        editor.tool = .text
+        click(canvas, at: CGPoint(x: 40, y: 300))
+        typeText(canvas, "first")
+        canvas.textBox?.textView.insertNewline(nil)
+        typeText(canvas, "second")
+        check(canvas.textBox?.string == "first\nsecond",
+              "Return starts a new line in the text box", "text \(String(describing: canvas.textBox?.string))")
+        let twoLines = canvas.textBox?.textRect.height ?? 0
+        check(twoLines > line * 1.5, "and the box grows to hold it", "height \(twoLines)")
+        _ = canvas.textBox?.textView.performKeyEquivalent(with: commandReturn(canvas))
+        check(canvas.textBox == nil && editor.document.history.canUndo,
+              "⌘Return stamps the text", "box still open: \(canvas.textBox != nil)")
+        check(ink(editor.document).map { $0.height > line * 1.5 } == true,
+              "both lines are in the picture", "ink \(String(describing: ink(editor.document)))")
+
+        // A colour picked mid-word: the sidebar takes the focus, the box must stay open, take
+        // the colour at once, and keep it for what is typed after.
+        reset(editor, width: 600, height: 300)
+        editor.tool = .text
+        click(canvas, at: CGPoint(x: 40, y: 150))
+        typeText(canvas, "Hello ")
+        canvas.window?.makeFirstResponder(nil)          // the click on a swatch
+        check(canvas.textBox != nil, "clicking away to the colours does not stamp the text", "box gone")
+        editor.primary = Color(.sRGB, red: 1, green: 0, blue: 0)
+        canvas.syncTextStyle()
+        check(canvas.window?.firstResponder === canvas.textBox?.textView,
+              "and typing carries on in the box afterwards", "focus \(String(describing: canvas.window?.firstResponder))")
+        typeText(canvas, "world")
+        let storage = canvas.textBox?.textView.textStorage
+        let redAt = { (i: Int) -> Bool in
+            guard let c = (storage?.attribute(.foregroundColor, at: i, effectiveRange: nil) as? NSColor)?
+                .usingColorSpace(.sRGB) else { return false }
+            return c.redComponent > 0.9 && c.greenComponent < 0.1
+        }
+        check(redAt(0) && redAt(8), "a colour picked while typing recolours the text already typed and what follows",
+              "first \(redAt(0)), later \(redAt(8))")
+        canvas.commitText()
+        var reddish = 0, blackish = 0
+        for y in 0..<editor.document.height {
+            for x in 0..<editor.document.width {
+                let p = editor.document.bitmap.pixel(x: x, y: y)
+                if p.r > 200 && p.g < 60 { reddish += 1 }
+                if p.r < 60 && p.g < 60 && p.b < 60 { blackish += 1 }
+            }
+        }
+        check(reddish > 50 && blackish == 0, "and the stamped text is in the new colour",
+              "red \(reddish), black \(blackish)")
+        editor.primary = .black
+
+        // With some of it selected, a colour only changes the selection.
+        reset(editor, width: 600, height: 300)
+        editor.tool = .text
+        click(canvas, at: CGPoint(x: 40, y: 150))
+        typeText(canvas, "AB CD")
+        canvas.textBox?.textView.setSelectedRange(NSRange(location: 0, length: 2))
+        editor.primary = Color(.sRGB, red: 0, green: 0, blue: 1)
+        canvas.syncTextStyle()
+        let colourAt = { (i: Int) -> NSColor? in
+            (canvas.textBox?.textView.textStorage?.attribute(.foregroundColor, at: i, effectiveRange: nil) as? NSColor)?
+                .usingColorSpace(.sRGB)
+        }
+        check((colourAt(0)?.blueComponent ?? 0) > 0.9 && (colourAt(3)?.blueComponent ?? 1) < 0.1,
+              "a colour picked with text selected changes only the selection",
+              "first \(String(describing: colourAt(0))), last \(String(describing: colourAt(3)))")
+        canvas.cancelText()
+        editor.primary = .black
+
+        // Size and font picked mid-typing restyle the box too.
+        reset(editor, width: 800, height: 300)
+        editor.tool = .text
+        click(canvas, at: CGPoint(x: 40, y: 150))
+        typeText(canvas, "Bigger")
+        let small = canvas.textBox?.textRect.height ?? 0
+        editor.fontSize = 72
+        editor.fontName = "Menlo"
+        canvas.syncTextStyle()
+        let font = canvas.textBox?.textView.textStorage?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+        check(font?.pointSize == 72 && font?.familyName == "Menlo" && (canvas.textBox?.textRect.height ?? 0) > small * 2,
+              "a size and font picked while typing restyle the text and the box",
+              "font \(String(describing: font)), height \(small) → \(canvas.textBox?.textRect.height ?? 0)")
+        canvas.cancelText()
+        editor.fontSize = 28
+        editor.fontName = "Helvetica Neue"
+
+        // What is on screen is what is stamped, at any zoom.
+        var stamps: [Data] = []
+        for zoom: CGFloat in [1, 3] {
+            reset(editor, width: 300, height: 200)
+            editor.zoom = zoom
+            canvas.applyZoom()
+            editor.tool = .text
+            drag(canvas, from: CGPoint(x: 20, y: 180), to: CGPoint(x: 140, y: 120))
+            typeText(canvas, "Same words at any zoom")
+            canvas.commitText()
+            stamps.append(pixels(editor.document))
+        }
+        editor.zoom = 1
+        canvas.applyZoom()
+        check(stamps.count == 2 && stamps[0] == stamps[1],
+              "text typed at 300% stamps the same pixels as at 100%", "the two pictures differ")
+
+        // ⌘Z while typing takes back typing, then the box, and only then the picture.
+        reset(editor, width: 400, height: 300)
+        paint(editor, canvas)
+        editor.tool = .text
+        click(canvas, at: CGPoint(x: 40, y: 260))
+        typeText(canvas, "abc")
+        editor.undo()
+        check(canvas.textBox?.string == "", "undo while typing takes back the typing",
+              "text \(String(describing: canvas.textBox?.string))")
+        editor.redo()
+        check(canvas.textBox?.string == "abc", "and redo puts it back",
+              "text \(String(describing: canvas.textBox?.string))")
+        editor.undo()
+        editor.undo()
+        let stroke = editor.document.bitmap.pixel(x: 185, y: 135)
+        check(canvas.textBox == nil && stroke.r < 230,
+              "the next undo closes the empty box and leaves the picture alone",
+              "box \(canvas.textBox != nil), stroke pixel \(stroke)")
+
+        // Escape throws the text away and leaves no step behind.
+        reset(editor, width: 400, height: 300)
+        editor.tool = .text
+        click(canvas, at: CGPoint(x: 40, y: 150))
+        typeText(canvas, "gone")
+        canvas.textBox?.textView.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        check(canvas.textBox == nil && !editor.document.history.canUndo && ink(editor.document) == nil,
+              "Escape cancels the text without touching the picture", "something was left")
+
+        // A click outside the box stamps it and does nothing else.
+        reset(editor, width: 400, height: 300)
+        editor.tool = .text
+        click(canvas, at: CGPoint(x: 40, y: 250))
+        typeText(canvas, "done")
+        click(canvas, at: CGPoint(x: 200, y: 80))
+        check(canvas.textBox == nil && editor.document.history.depth == 1,
+              "clicking outside the box stamps the text without opening another box",
+              "box \(canvas.textBox != nil), depth \(editor.document.history.depth)")
+
+        // Switching tool stamps it too.
+        reset(editor, width: 400, height: 300)
+        editor.tool = .text
+        click(canvas, at: CGPoint(x: 40, y: 250))
+        typeText(canvas, "kept")
+        editor.tool = .brush
+        check(canvas.textBox == nil && ink(editor.document) != nil,
+              "switching tool stamps the text rather than losing it", "no text in the picture")
+
+        // A picture of an open box, for a person to look at.
+        if let dir = ProcessInfo.processInfo.environment["DAUB_SELFTEST_SHOTS"] {
+            reset(editor, width: 700, height: 420)
+            editor.zoom = 1.5
+            canvas.applyZoom()
+            editor.tool = .text
+            drag(canvas, from: CGPoint(x: 40, y: 380), to: CGPoint(x: 330, y: 300))
+            typeText(canvas, "A box you drag out wraps its lines at its own width. ")
+            editor.primary = Color(.sRGB, red: 0.85, green: 0.1, blue: 0.1)
+            canvas.syncTextStyle()
+            canvas.textBox?.textView.setSelectedRange(NSRange(location: canvas.textBox?.string.count ?? 0, length: 0))
+            typeText(canvas, "Pick a colour mid-sentence and it shows at once.")
+            canvas.window?.displayIfNeeded()
+            Screenshot.capture(to: URL(fileURLWithPath: dir).appendingPathComponent("text-box.png"))
+            canvas.cancelText()
+            editor.zoom = 1
+            editor.primary = .black
+        }
     }
 
     // MARK: - Helpers

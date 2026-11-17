@@ -47,7 +47,7 @@ enum Tool: String, CaseIterable, Identifiable, Sendable {
         case .picker:
             "Takes the colour under the click into the foreground swatch; right-click takes it into the background. Snaps back to your previous tool afterwards."
         case .text:
-            "Click, type, press ⏎ to stamp it into the picture. Escape cancels. Once stamped it is pixels, not text, so set the font and size first."
+            "Click for a line that runs as long as you type, or drag out a box and the lines wrap at its width. ⏎ starts a new line; ⌘⏎ or a click outside stamps it into the picture; Escape cancels. Drag the border to move the box, a side handle to change its width. A colour, font or size picked while typing applies at once: to the selected words, or to the whole box when nothing is selected. Once stamped it is pixels, not text."
         case .clone:
             "⌥-click to set the source, then paint to copy from it. The source moves with your stroke, keeping the offset."
         case .colourReplace:
