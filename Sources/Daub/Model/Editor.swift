@@ -261,12 +261,9 @@ final class Editor: ObservableObject {
     /// Unsaved work is the one thing an app this small must never lose silently.
     @discardableResult
     func confirmDiscardIfNeeded() -> Bool {
-        // Do NOT commit the floating selection here: the user may still press Cancel, and
-        // a committed float cannot be picked back up to carry on moving it.
-        // Text still being typed is different: it is not in the picture at all until it is
-        // stamped, so the prompt below could not see it otherwise.
-        canvas?.commitText()
-        guard document.isDirty || canvas?.hasFloatingSelection == true else { return true }
+        // Commit neither the floating selection nor the text box here: the user may still
+        // press Cancel and carry on moving or typing. Save stamps both itself.
+        guard hasUnsavedWork else { return true }
         let alert = NSAlert()
         alert.messageText = "Save changes to “\(document.displayName)”?"
         alert.informativeText = "Your changes will be lost if you don’t save them."
@@ -278,11 +275,16 @@ final class Editor: ObservableObject {
         case .alertSecondButtonReturn:
             // The user has said the work is expendable. Recording that stops a second
             // prompt when closing the window also ends up quitting the app.
+            canvas?.cancelText()
             document.isDirty = false
             isDirty = false
             return true
         default: return false
         }
+    }
+
+    var hasUnsavedWork: Bool {
+        document.isDirty || canvas?.hasFloatingSelection == true || canvas?.textBox?.isBlank == false
     }
 
     private func present(_ error: Error) {

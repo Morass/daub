@@ -803,11 +803,11 @@ final class CanvasView: NSView {
         cancelText()
         let font = editor.textFont
         let rect = CGRect.normalised(from: start, to: end)
-        let dragged = rect.width * zoom >= 6
+        let dragged = max(rect.width, rect.height) * zoom >= 6
         let box: TextBoxView
         if dragged {
             box = TextBoxView(anchor: CGPoint(x: rect.minX.rounded(), y: rect.maxY.rounded()),
-                              wrapWidth: rect.width.rounded(), minimumHeight: rect.height.rounded(),
+                              wrapWidth: max(TextBoxView.minimumWidth, rect.width.rounded()), minimumHeight: rect.height.rounded(),
                               zoom: zoom, font: font, colour: editor.primaryNS)
         } else {
             // The I-beam's middle is where the click was: centre the first line on it.
@@ -827,6 +827,9 @@ final class CanvasView: NSView {
     /// Stamp the open text box into the picture, exactly as it is laid out on screen.
     func commitText() {
         guard let box = textBox else { return }
+        // A colour or size picked a moment ago may not have reached the box yet: SwiftUI
+        // pushes it on its next update, which a stamp in the same event would precede.
+        syncTextStyle()
         box.finishComposing()
         textBox = nil
         textStyleSeen = nil

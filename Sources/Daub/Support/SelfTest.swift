@@ -641,6 +641,45 @@ enum SelfTest {
               "clicking outside the box stamps the text without opening another box",
               "box \(canvas.textBox != nil), depth \(editor.document.history.depth)")
 
+        // A colour picked a moment before the stamp, before SwiftUI has pushed it to the box.
+        reset(editor, width: 400, height: 300)
+        editor.tool = .text
+        click(canvas, at: CGPoint(x: 40, y: 150))
+        typeText(canvas, "late")
+        editor.primary = Color(.sRGB, red: 1, green: 0, blue: 0)
+        canvas.commitText()
+        let lateInk = ink(editor.document)
+        let lateRed = lateInk.map { r in
+            (Int(r.minX)..<Int(r.maxX)).contains { x in
+                (Int(r.minY)..<Int(r.maxY)).contains { y in
+                    let p = editor.document.bitmap.pixel(x: x, y: y)
+                    return p.r > 200 && p.g < 60
+                }
+            }
+        } ?? false
+        check(lateRed, "a colour picked just before stamping is the colour stamped", "no red pixels")
+        editor.primary = .black
+
+        // A tall, narrow drag is a narrow box, not a click.
+        reset(editor, width: 400, height: 400)
+        editor.tool = .text
+        drag(canvas, from: CGPoint(x: 100, y: 350), to: CGPoint(x: 103, y: 100))
+        typeText(canvas, "narrow words")
+        check(canvas.textBox.map { $0.textRect.width < 20 && $0.textRect.height > line * 2.5 } == true,
+              "a tall narrow drag opens a narrow box that wraps",
+              "box \(String(describing: canvas.textBox?.textRect))")
+        canvas.cancelText()
+
+        // Asking whether to save must leave the text editable: the user may press Cancel.
+        reset(editor, width: 400, height: 300)
+        editor.tool = .text
+        click(canvas, at: CGPoint(x: 40, y: 150))
+        typeText(canvas, "unsaved")
+        check(editor.hasUnsavedWork && canvas.textBox != nil && !editor.document.history.canUndo,
+              "text still being typed counts as unsaved work without being stamped",
+              "unsaved \(editor.hasUnsavedWork), box \(canvas.textBox != nil)")
+        canvas.cancelText()
+
         // Switching tool stamps it too.
         reset(editor, width: 400, height: 300)
         editor.tool = .text
